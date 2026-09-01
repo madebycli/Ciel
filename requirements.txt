@@ -1,0 +1,18 @@
+requests>=2.31
+pyttsx3>=2.90
+pywin32; sys_platform == "win32"
+
+# --- Optional: voice cloning (VOICE_ENGINE = "clone" in config/settings.py) ---
+# Do NOT just pip install -r this file if you want CUDA (GPU) support -
+# install the correct torch build FIRST. See README's "Voice cloning"
+# section for the exact command for your GPU. If torch is already
+# installed with CUDA support when you get here, pip will leave it alone.
+coqui-tts>=0.27
+sounddevice>=0.4.6
+soundfile>=0.12
+
+# Required for CLONE_LANGUAGE = "ja" (Japanese text normalization/
+# romanization for XTTS). Without these, synthesizing Japanese text fails
+# with "No module named 'cutlet'".
+cutlet>=0.4
+fugashi[unidic-lite]>=1.3
