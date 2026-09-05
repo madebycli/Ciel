@@ -7,6 +7,7 @@ touching application logic.
 """
 
 import os
+import sys
 
 # --- Provider selection -----------------------------------------------
 # Only "ollama" exists today. This string is read by main.py to decide
@@ -447,7 +448,51 @@ SESSION_IDLE_RESET_MINUTES = 15
 # to count as a fresh session (SESSION_IDLE_RESET_MINUTES above), or on
 # an explicit reset - see great_sage/core/memory.py.
 MEMORY_ENABLED = True
-MEMORY_FILE_PATH = "memory.txt"
+# ---------------------------------------------------------------------
+# WHERE USER DATA LIVES
+#
+# Memories, chats and settings are the user's, not the application's, and
+# they must outlive it. A packaged build previously wrote them beside the
+# bundled code (app.py chdir's to _MEIPASS), which meant:
+#   - every rebuild or reinstall silently wiped them
+#   - an update would take the user's memory with it
+#   - two accounts on one machine shared one file
+#
+# Frozen  -> %LOCALAPPDATA%\GreatSage
+# Source  -> the repo folder, so development keeps working as before
+# Either  -> GREAT_SAGE_DATA_DIR overrides both.
+#
+# That override is also the hook for spec S64's portable identity: point
+# it at an external drive and Great Sage's memory follows the drive
+# rather than the machine.
+def _data_dir() -> str:
+    override = os.environ.get("GREAT_SAGE_DATA_DIR")
+    if override:
+        base = os.path.abspath(os.path.expanduser(override))
+    elif getattr(sys, "frozen", False):
+        root = (os.environ.get("LOCALAPPDATA")
+                or os.path.expanduser("~"))
+        base = os.path.join(root, "GreatSage")
+    else:
+        # settings.py is great_sage/config/settings.py, so the repo
+        # root is three levels up - not two.
+        base = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+    try:
+        os.makedirs(base, exist_ok=True)
+    except Exception:
+        base = os.getcwd()          # never let this stop the app starting
+    return base
+
+
+DATA_DIR = _data_dir()
+
+
+def _user_file(name: str) -> str:
+    return os.path.join(DATA_DIR, name)
+
+
+MEMORY_FILE_PATH = _user_file("memory.txt")
 
 # Oldest facts get dropped once the file exceeds this many lines, so it
 # can't grow forever.
@@ -471,17 +516,17 @@ MEMORY_RECALL_LIMIT = 6
 # Per-voice-line on/off preferences (e.g. hearing Pocket TTS actually say
 # "Notice." instead of always playing koku.ogg) - toggled from the HUD's
 # settings panel, persisted here. See great_sage/core/voice_line_prefs.py.
-VOICE_LINE_PREFS_PATH = "voice_line_prefs.json"
+VOICE_LINE_PREFS_PATH = _user_file("voice_line_prefs.json")
 
 # Everything else the HUD's settings panel controls (sliders, toggles,
 # colors, which cloned-voice candidate is active) - persisted here so the
 # HUD looks/behaves the same across restarts. See great_sage/core/hud_settings.py.
-HUD_SETTINGS_PATH = "hud_settings.json"
+HUD_SETTINGS_PATH = _user_file("hud_settings.json")
 
 # Saved conversations (spec S6: chats persist between launches).
 # Personal content - transcripts of everything said - so it is
 # gitignored alongside memory.txt rather than tracked.
-CHAT_STORE_PATH = "chats.json"
+CHAT_STORE_PATH = _user_file("chats.json")
 
 # Folder of candidate cloned-voice reference clips the HUD's voice picker
 # lets you switch between at runtime - each "<id>.wav" (the actual
