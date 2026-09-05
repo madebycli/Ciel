@@ -830,15 +830,33 @@
   }
   .topic-item:hover { opacity: 1; background: rgba(255,255,255,0.06); }
   .topic-item.active { opacity: 1; border-left-color: #ffffff; background: rgba(255,255,255,0.08); }
-  .topic-delete-btn {
-    flex-shrink: 0;
-    background: transparent; border: none; color: rgba(255,255,255,0.4);
-    font-family: Consolas, monospace; font-size: 10px;
-    padding: 0 2px; cursor: pointer;
-    opacity: 0; transition: opacity 140ms ease, color 140ms ease;
+  .topic-menu-btn {
+    background: none; border: 0; cursor: pointer; padding: 0 4px;
+    color: rgba(220,240,255,0.55); font-size: 15px; line-height: 1;
+    opacity: 0; transition: opacity 0.12s ease, color 0.12s ease;
   }
-  .topic-item:hover .topic-delete-btn { opacity: 1; }
-  .topic-delete-btn:hover { color: #ffffff; }
+  .topic-item:hover .topic-menu-btn { opacity: 1; }
+  .topic-menu-btn:hover { color: #ffffff; }
+
+  /* Floating menu (spec S7). Fixed-positioned and appended to <body> so
+     it is never clipped by the sidebar's own overflow. */
+  .topic-menu {
+    position: fixed; z-index: 40; min-width: 168px;
+    background: rgba(10,18,28,0.97);
+    border: 1px solid rgba(120,190,255,0.28);
+    border-radius: 4px; padding: 4px;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.55);
+    font-size: 12px; letter-spacing: 0.04em;
+  }
+  .topic-menu-item {
+    display: block; width: 100%; text-align: left;
+    background: none; border: 0; cursor: pointer;
+    padding: 7px 10px; color: rgba(225,240,255,0.9);
+    font: inherit; letter-spacing: inherit; border-radius: 3px;
+  }
+  .topic-menu-item:hover { background: rgba(120,190,255,0.16); color: #fff; }
+  .topic-menu-item.danger { color: #ff9a9a; }
+  .topic-menu-item.danger:hover { background: rgba(255,90,90,0.18); color: #fff; }
   #history-main { flex: 1; min-width: 0; }
 /* ---------------- Window controls ----------------
    The app has no native title bar (transparent=True creates the window as
@@ -4513,7 +4531,9 @@ const MINI_CHAT_PAD = 3;
       if (replyBuffer) {
         ensureActiveTopic();
         currentTopic().messages.push({ role: 'assistant', text: replyBuffer });
+        currentTopic().updated = Date.now();
         renderHistory();
+        saveChats();
       }
     } else if (msg.type === 'audio') {
       // The words in THIS clip, revealed as it starts playing, so the
@@ -4558,6 +4578,37 @@ const MINI_CHAT_PAD = 3;
       speechInProgress = false;
       spokenSoFar = '';
       showCaption('[Error] ' + msg.message);
+    } else if (msg.type === 'chat_action_result') {
+      // Result of Summarize / Remember from the three-dot menu. A summary
+      // is stored on the chat so it survives a restart; a memory takeaway
+      // has already been written to memory.txt server-side, so this is
+      // only the confirmation.
+      const t = chatTopics.find((c) => c.id === msg.id);
+      if (t && msg.action === 'summarize_chat' && msg.text) {
+        t.summary = msg.text;
+        saveChats();
+      }
+      if (msg.text) window.alert(msg.text);
+    } else if (msg.type === 'chats') {
+      // Saved conversations, sent by the server on connect (spec S6).
+      // Replaces the in-memory list rather than merging: this arrives
+      // once, before anything can have been said this session.
+      if (Array.isArray(msg.chats)) {
+        chatTopics.length = 0;
+        msg.chats.forEach((c) => chatTopics.push({
+          id: c.id, title: c.title || 'New chat',
+          created: c.created, updated: c.updated,
+          summary: c.summary || '',
+          messages: Array.isArray(c.messages) ? c.messages : [],
+        }));
+        // Deliberately does NOT select one. Restoring the sidebar is not
+        // the same as resuming a conversation - the model's context
+        // starts empty, so marking an old chat active would show a
+        // transcript the AI cannot actually remember.
+        activeTopicId = null;
+        renderTopicList();
+        renderHistory();
+      }
     } else if (msg.type === 'voice_lines') {
       renderVoiceLineSets(msg.sets, msg.set);
       renderVoiceLineToggles(msg.lines);
@@ -4623,8 +4674,10 @@ const MINI_CHAT_PAD = 3;
       topic.title = text.length > 40 ? text.slice(0, 40) + '…' : text;
     }
     topic.messages.push({ role: 'user', text });
+    topic.updated = Date.now();
     renderTopicList();
     renderHistory();
+    saveChats();
     aiThinking = true;
     ws.send(JSON.stringify({ type: 'chat', text }));
     chatInput.value = '';
@@ -4650,8 +4703,10 @@ const MINI_CHAT_PAD = 3;
       topic.title = text.length > 40 ? text.slice(0, 40) + '…' : text;
     }
     topic.messages.push({ role: 'user', text });
+    topic.updated = Date.now();
     renderTopicList();
     renderHistory();
+    saveChats();
     aiThinking = true;
   }
 
@@ -7091,12 +7146,108 @@ const MINI_CHAT_PAD = 3;
 
   function ensureActiveTopic() {
     if (chatTopics.some((t) => t.id === activeTopicId)) return;
-    const topic = { id: Date.now(), title: 'New chat', messages: [] };
+    const topic = { id: Date.now(), title: 'New chat', messages: [],
+                    created: Date.now(), updated: Date.now(), summary: '' };
     chatTopics.push(topic);
     activeTopicId = topic.id;
   }
   function currentTopic() {
     return chatTopics.find((t) => t.id === activeTopicId);
+  }
+
+  // Push the whole list to the server, coalesced: a burst of edits (the
+  // message, the reply landing, a rename) becomes one write instead of
+  // three. See core/chat_store.py for why the whole list is sent.
+  let saveChatsTimer = null;
+  function saveChats() {
+    clearTimeout(saveChatsTimer);
+    saveChatsTimer = setTimeout(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(JSON.stringify({ type: 'save_chats', chats: chatTopics }));
+      } catch (err) { console.warn('could not save chats', err); }
+    }, 400);
+  }
+
+  // One floating menu reused by every row, closed on any outside click.
+  // Building a menu per row would leave dozens in the DOM, each with its
+  // own listeners, for a list that can grow to 200 chats.
+  let openMenuEl = null;
+  function closeTopicMenu() {
+    if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; }
+  }
+  document.addEventListener('click', closeTopicMenu);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeTopicMenu();
+  });
+
+  function openTopicMenu(topic, anchorEl) {
+    closeTopicMenu();
+    const menu = document.createElement('div');
+    menu.className = 'topic-menu';
+    menu.addEventListener('click', (e) => e.stopPropagation());
+
+    const item = (label, danger, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'topic-menu-item' + (danger ? ' danger' : '');
+      b.textContent = label;
+      b.addEventListener('click', () => { closeTopicMenu(); fn(); });
+      menu.appendChild(b);
+    };
+
+    item('Rename', false, () => {
+      const name = window.prompt('Rename this chat:', topic.title);
+      if (name === null) return;                 // cancelled
+      const clean = name.trim();
+      if (!clean) return;
+      topic.title = clean.slice(0, 120);
+      renderTopicList();
+      saveChats();
+    });
+
+    item('Summarize', false, () => requestChatAction('summarize_chat', topic));
+    item('Remember this chat', false,
+         () => requestChatAction('remember_chat', topic));
+
+    item('Delete', true, () => {
+      // Spec S7: deletion needs a second confirmation.
+      if (!window.confirm('Delete this conversation?
+
+"' + topic.title +
+                          '"
+
+This cannot be undone.')) return;
+      const wasActive = topic.id === activeTopicId;
+      chatTopics.splice(chatTopics.indexOf(topic), 1);
+      if (wasActive) {
+        // Deleting the live conversation clears the model's context too -
+        // there is nothing left for it to stay "active" against.
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'reset_chat' }));
+        }
+        activeTopicId = null;
+      }
+      renderTopicList();
+      renderHistory();
+      saveChats();
+    });
+
+    const r = anchorEl.getBoundingClientRect();
+    menu.style.left = Math.round(r.left - 120) + 'px';
+    menu.style.top = Math.round(r.bottom + 4) + 'px';
+    document.body.appendChild(menu);
+    openMenuEl = menu;
+  }
+
+  // Summarize / Remember both need the model, so they are server round
+  // trips. The server replies with chat_action_result.
+  function requestChatAction(kind, topic) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: kind, id: topic.id, title: topic.title,
+      messages: topic.messages,
+    }));
   }
 
   function renderTopicList() {
@@ -7111,28 +7262,20 @@ const MINI_CHAT_PAD = 3;
       label.textContent = topic.title;
       div.appendChild(label);
 
-      const deleteBtn = document.createElement('button');
-      deleteBtn.className = 'topic-delete-btn';
-      deleteBtn.type = 'button';
-      deleteBtn.textContent = '✕';
-      deleteBtn.title = 'Delete this chat';
-      deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation(); // don't also trigger the row's own click-to-select
-        const wasActive = topic.id === activeTopicId;
-        chatTopics.splice(chatTopics.indexOf(topic), 1);
-        if (wasActive) {
-          // Deleting the live conversation resets the AI's actual memory
-          // too, same as starting a new one - there's nothing left to
-          // stay "active" otherwise.
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'reset_chat' }));
-          }
-          activeTopicId = null;
-        }
-        renderTopicList();
-        renderHistory();
+      // Spec S7: a three-dot menu, NOT an X. An X sitting on every row
+      // is a one-click destructive action next to the row you click to
+      // SELECT a chat - the two are a pixel apart, and the failure mode
+      // is losing a conversation you meant to open.
+      const menuBtn = document.createElement('button');
+      menuBtn.className = 'topic-menu-btn';
+      menuBtn.type = 'button';
+      menuBtn.textContent = '⋯';          // midline horizontal ellipsis
+      menuBtn.title = 'Chat options';
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();                  // don't also select the row
+        openTopicMenu(topic, menuBtn);
       });
-      div.appendChild(deleteBtn);
+      div.appendChild(menuBtn);
 
       div.addEventListener('click', () => {
         activeTopicId = topic.id;
@@ -7169,7 +7312,8 @@ const MINI_CHAT_PAD = 3;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'reset_chat' }));
     }
-    const topic = { id: Date.now(), title: 'New chat', messages: [] };
+    const topic = { id: Date.now(), title: 'New chat', messages: [],
+                    created: Date.now(), updated: Date.now(), summary: '' };
     chatTopics.push(topic);
     activeTopicId = topic.id;
     renderTopicList();

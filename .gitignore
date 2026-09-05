@@ -58,3 +58,4 @@ great_sage_hud.log
 # Per-machine runtime state, not source (spec S0: keep user data separate).
 hud_settings.json
 voice_line_prefs.json
+chats.json

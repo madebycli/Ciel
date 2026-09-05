@@ -161,7 +161,8 @@ import sounddevice as sd
 import websockets
 
 from great_sage.config import settings
-from great_sage.core import guardrails, hud_settings, personality, voice_line_prefs
+from great_sage.core import (chat_store, guardrails, hud_settings, personality,
+                             voice_line_prefs)
 from great_sage.core.metrics import ResponseTimer
 from great_sage.log_broadcast import BroadcastLogHandler
 from great_sage.models.base import ModelProviderError
@@ -318,6 +319,55 @@ def _list_input_devices():
     except Exception:
         log.exception("Could not list audio input devices")
     return devices
+
+
+def _transcript(messages, limit=60):
+    """Flatten a chat into text for the model, newest turns kept.
+
+    Capped because a long conversation would otherwise blow past the
+    context window and get silently truncated at the front - losing the
+    system instruction rather than the oldest chatter.
+    """
+    out = []
+    for m in (messages or [])[-limit:]:
+        if not isinstance(m, dict):
+            continue
+        who = "Master" if m.get("role") == "user" else "Great Sage"
+        text = str(m.get("text", "")).strip()
+        if text:
+            out.append(f"{who}: {text}")
+    return "\n".join(out)
+
+
+def _summarise_chat(provider, title, messages):
+    """Spec S8: topic + compact summary, NOT a replay of the conversation."""
+    body = _transcript(messages)
+    if not body:
+        return None
+    prompt = (
+        "Summarise this conversation for a sidebar entry. Reply with "
+        "exactly two lines and nothing else:\n"
+        "Topic: <five words or fewer>\n"
+        "Summary: <two sentences: the main point, any decision reached, "
+        "and anything left unresolved>\n"
+        "Do not copy the conversation back. Do not add commentary.\n\n"
+        + body)
+    return provider.send_message([{"role": "user", "content": prompt}]).strip()
+
+
+def _chat_takeaway(provider, title, messages):
+    """Spec S18/S20: the durable idea worth keeping, compressed."""
+    body = _transcript(messages)
+    if not body:
+        return None
+    prompt = (
+        "From this conversation, extract only what is worth remembering "
+        "long-term about Master - preferences, decisions, how they work, "
+        "ongoing projects. Reply with one to three short lines, each a "
+        "single fact, no bullets or numbering. If there is nothing worth "
+        "keeping, reply with exactly: NOTHING\n\n" + body)
+    out = provider.send_message([{"role": "user", "content": prompt}]).strip()
+    return None if out.upper().startswith("NOTHING") else out
 
 
 def _handle_chat(text, engine, voice, sink, websocket, loop) -> None:
@@ -587,6 +637,18 @@ async def run_server(engine, voice) -> None:
         sink = BrowserAudioSink(websocket, loop)
         is_log_subscriber = False
         log.info("Client connected")
+        # Hand back the saved conversations. Sent on connect rather than
+        # on request so the sidebar is populated by the time the page is
+        # interactive - the HUD owns the list from then on.
+        try:
+            stored = chat_store.load(settings.CHAT_STORE_PATH)
+            await websocket.send(json.dumps({"type": "chats", "chats": stored}))
+            if stored:
+                log.info("Restored %d saved chat(s)", len(stored))
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        except Exception:
+            log.exception("Could not restore saved chats")
         if voice is not None and hasattr(voice, "list_voice_lines"):
             try:
                 from main import active_voice_line_set
@@ -717,6 +779,43 @@ async def run_server(engine, voice) -> None:
                                     await websocket.send(json.dumps({"type": "error", "message": str(exc)}))
                                 except websockets.exceptions.ConnectionClosed:
                                     pass
+                elif msg_type in ("summarize_chat", "remember_chat"):
+                    # Both need the model, so they run off the event loop
+                    # for the same reason _handle_chat does.
+                    def _run(kind=msg_type, payload=data):
+                        title = str(payload.get("title") or "this chat")
+                        msgs = payload.get("messages")
+                        try:
+                            if kind == "summarize_chat":
+                                out = _summarise_chat(engine.provider, title, msgs)
+                                note = out or "Nothing to summarise yet."
+                            else:
+                                out = _chat_takeaway(engine.provider, title, msgs)
+                                if out:
+                                    memory.save_facts(
+                                        settings.MEMORY_FILE_PATH,
+                                        [l.strip() for l in out.splitlines() if l.strip()],
+                                        settings.MEMORY_MAX_FACTS)
+                                    note = "Remembered:\n" + out
+                                else:
+                                    note = "Nothing here was worth keeping."
+                        except Exception as exc:
+                            log.exception("%s failed", kind)
+                            note = f"Could not complete that: {exc}"
+                        payload_out = json.dumps({
+                            "type": "chat_action_result", "action": kind,
+                            "id": payload.get("id"), "text": note})
+                        asyncio.run_coroutine_threadsafe(
+                            websocket.send(payload_out), loop)
+                    threading.Thread(target=_run, daemon=True).start()
+                elif msg_type == "save_chats":
+                    # Whole-list save; see core/chat_store.py for why.
+                    try:
+                        n = chat_store.save(settings.CHAT_STORE_PATH,
+                                            data.get("chats"))
+                        log.debug("Saved %d chat(s)", n)
+                    except Exception:
+                        log.exception("Could not save chats")
                 elif msg_type == "save_settings":
                     blob = data.get("settings")
                     if isinstance(blob, dict):

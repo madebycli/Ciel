@@ -478,6 +478,11 @@ VOICE_LINE_PREFS_PATH = "voice_line_prefs.json"
 # HUD looks/behaves the same across restarts. See great_sage/core/hud_settings.py.
 HUD_SETTINGS_PATH = "hud_settings.json"
 
+# Saved conversations (spec S6: chats persist between launches).
+# Personal content - transcripts of everything said - so it is
+# gitignored alongside memory.txt rather than tracked.
+CHAT_STORE_PATH = "chats.json"
+
 # Folder of candidate cloned-voice reference clips the HUD's voice picker
 # lets you switch between at runtime - each "<id>.wav" (the actual
 # reference audio) paired with an "<id>_preview.wav" (a short pre-
