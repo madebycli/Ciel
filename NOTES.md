@@ -708,3 +708,55 @@ returned healthy-looking audio from a build whose F5 path was broken.
 A real test must send a SECOND turn (the first always triggers session
 start) and check the reply against every pattern in `VOICE_LINE_SETS`.
 Real synthesis is ~380KB for a 20-word sentence; a clip is ~25KB.
+
+---
+
+## Phase 3 started: chats persist, and user data left the bundle
+
+`core/chat_store.py` + `save_chats`/`chats` over the WebSocket. The HUD
+still owns the list; the store only writes it down, atomically (temp file
+then `os.replace`), validating the payload because it arrives from the
+page. The existing `chatTopics` system was extended, not replaced.
+
+Restoring the sidebar deliberately does **not** select a chat: the
+model's context starts empty on launch, so marking one active would show
+a transcript the AI cannot actually remember.
+
+Spec S7's three-dot menu replaces the per-row `X` - Rename, Summarize,
+Remember this chat, Delete, with Delete asking for confirmation. An `X`
+is a one-click destructive control sitting pixels from the row you click
+to *select* a chat.
+
+### The bug this uncovered: user data lived inside the app
+
+`app.py` chdir's to `_MEIPASS`, so every relative path in `settings.py`
+resolved **inside the bundle**. Memories, chats, HUD settings and
+voice-line preferences were all being written to
+`dist/GreatSage/_internal/`.
+
+Every rebuild overwrites `dist/`. An installer update would have wiped
+the user's memory and every conversation, silently.
+
+    frozen  -> %LOCALAPPDATA%\GreatSage
+    source  -> the repo folder (development unchanged)
+    either  -> GREAT_SAGE_DATA_DIR overrides both
+
+Only USER data moved. Application assets - the reference clip,
+`voice_lines/`, `vendor/` - stay relative to the bundle; they ship with
+the code and are not the user's to keep.
+
+That override is the same hook spec S64 wants for a portable identity:
+point it at an external drive and the memory follows the drive, not the
+machine. Groundwork only - no sync implemented.
+
+Verified on the packaged exe: chats written to
+`%LOCALAPPDATA%\GreatSage\chats.json`, nothing left in `_internal/`.
+
+### Editing note
+
+Several edits to `settings.py`, `server.py` and `hud_prototype.html` were
+corrupted by writing `\n` inside a bash heredoc - the escape is eaten and
+the string literal breaks across lines. Build the text with `chr(10)` and
+emit it via `json.dumps`, or splice by line index. Also: reading a file
+through `sed 's/^/  /'` adds two spaces, so anchors copied from that
+output will never match.
