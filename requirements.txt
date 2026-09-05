@@ -1,18 +1,90 @@
-requests>=2.31
-pyttsx3>=2.90
-pywin32; sys_platform == "win32"
+# Great Sage - runtime dependencies.
+#
+# IMPORTANT: install torch FIRST, with the right CUDA build for your GPU,
+# then everything below. Pip will leave an existing CUDA torch alone; let
+# it resolve torch itself and you get the CPU build, which makes F5-TTS
+# far too slow to speak in real time.
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r requirements.txt
+#
+# NOT a Python dependency, and NOT bundleable: Ollama must be installed
+# separately and the model pulled once -
+#   https://ollama.com/download   then:  ollama pull qwen2.5:3b
 
-# --- Optional: voice cloning (VOICE_ENGINE = "clone" in config/settings.py) ---
-# Do NOT just pip install -r this file if you want CUDA (GPU) support -
-# install the correct torch build FIRST. See README's "Voice cloning"
-# section for the exact command for your GPU. If torch is already
-# installed with CUDA support when you get here, pip will leave it alone.
-coqui-tts>=0.27
+# --- Model provider -----------------------------------------------------
+requests>=2.31
+
+# --- HUD app (run_hud.py): native window + its WebSocket bridge ---------
+websockets>=12.0
+pywebview>=5.0
+
+# --- Audio I/O ----------------------------------------------------------
 sounddevice>=0.4.6
 soundfile>=0.12
+numpy>=1.24
 
-# Required for CLONE_LANGUAGE = "ja" (Japanese text normalization/
-# romanization for XTTS). Without these, synthesizing Japanese text fails
-# with "No module named 'cutlet'".
-cutlet>=0.4
-fugashi[unidic-lite]>=1.3
+# --- Voice: F5-TTS, the active engine (VOICE_ENGINE = "f5") ------------
+# Flow-matching TTS. Needs a CUDA torch to keep up with speech; see the
+# note at the top of this file.
+f5-tts>=1.0
+
+# --- Voice effects ------------------------------------------------------
+# The EQ / reverb / character chain in voice/audio_fx.py.
+pedalboard>=0.9
+
+# --- Transparent desktop overlay (overlay_window.py) -------------------
+# The overlay runs as its own process on Qt, NOT on pywebview. That is not
+# a preference: pywebview hosts WebView2 in windowed mode, which renders
+# into a child HWND, and per-pixel alpha needs a composited top-level
+# window. Seven approaches were measured against a coloured backdrop and
+# every one came back opaque. Qt's WA_TranslucentBackground does work, and
+# QWebEngineView is the same Chromium engine, so the Three.js scene is
+# unchanged - only the window hosting it differs.
+#
+# *** DO NOT pip install PySide6 into this environment. ***
+#
+# The overlay needs PySide6 6.4.3, and 6.4.3 has no Python 3.14 build.
+# It lives in its own Python 3.11 virtualenv, .overlay-venv, which
+# run_hud.py launches the overlay process under. Only the overlay moves;
+# the app keeps running on 3.14 with torch and F5-TTS untouched, which is
+# possible only because the overlay is already a separate process.
+#
+#   py -3.11 -m venv .overlay-venv
+#   .overlay-venv/Scripts/python.exe -m pip install PySide6==6.4.3 pyinstaller
+#
+# Why 6.4.3 specifically: the overlay flickered on every newer release.
+# Qt moved QtWebEngine onto the ANGLE backend in 6.5.1 and translucent
+# windows have flickered on it since (same symptom reported against
+# another Qt WebEngine app, TissUUmaps #47). 6.4.3 predates that switch,
+# and the flicker is gone on it - confirmed by watching it, after 6.10.1
+# was wrongly reported as fixed off a single clean run.
+#
+# Do NOT "fix" a flicker by selecting a different graphics backend - it
+# was tried, and ANGLE is also what makes the transparency work here:
+#   --use-angle=gl      GPU context lost, nothing renders
+#   --use-angle=d3d9    fails to start
+#   QT_OPENGL=desktop   renders, but the window is opaque
+# Escaping ANGLE means losing the transparency the overlay exists for.
+#
+# Packaging follows the same split: build.py builds the overlay from
+# .overlay-venv and the app from this environment, into two bundles.
+
+# --- Voice input: local speech-to-text ---------------------------------
+# Push-to-talk and the wake word. CPU-only and fully offline after it
+# downloads a small Whisper model (~75-150MB) to the HF cache on first use.
+faster-whisper>=1.0
+
+# --- Packaging (build only, not needed to run from source) -------------
+# pyinstaller>=6.0
+
+# --- Removed, deliberately ---------------------------------------------
+# coqui-tts / cutlet / fugashi : XTTS-v2 (VOICE_ENGINE = "clone"). Replaced
+#   by F5-TTS. coqui-tts alone pulled well over a gigabyte of transitive
+#   dependencies that nothing in the running app imports any more.
+# pocket-tts                   : VOICE_ENGINE = "pocket", also superseded.
+# pyttsx3 / pywin32            : VOICE_ENGINE = "sapi5", the original
+#   robotic Windows voice.
+# The engine modules for all three are still in voice/ behind the
+# VOICE_ENGINE switch, and each imports its library lazily - so they cost
+# nothing until selected, and reinstating one is a pip install away.

@@ -46,20 +46,75 @@ different installed Windows voice, adjust `VOICE_ID` in the same file (see
 the comment there for how to list installed voices). You can also type
 `voice off` inside a running session to stop speaking without restarting.
 
-## Voice cloning (optional, GPU recommended)
+The chat persona (Great Sage, addressing you as "Master") lives in
+`SYSTEM_PROMPT` in the same file.
+
+## Voice cloning
 
 Instead of a generic Windows voice, Great Sage can speak in a voice
-cloned from a short recording of your own voice, using the local
-open-source XTTS-v2 model. This is heavier than the default voice
-(bigger install, multi-GB model download, needs real compute) — set it
-up once you've confirmed the basic prototype works.
+cloned from a short recording of your own. Two engines are available;
+**Pocket TTS is the default** and the one to use unless you specifically
+need Japanese.
 
-**1. Record a reference clip.** 15-30 seconds of clean audio of you
-talking normally — no music, no background noise, no other people
-talking. Windows' built-in Voice Recorder app works fine. Export/save it
-as a `.wav` file, and place it at `voice_samples/my_voice.wav` in the
-project folder (or update `CLONE_REFERENCE_AUDIO_PATH` in
-`config/settings.py` to point wherever you saved it).
+### Pocket TTS (default, `VOICE_ENGINE = "pocket"`)
+
+[Kyutai's Pocket TTS](https://kyutai.org/blog/2026-01-13-pocket-tts/) -
+CPU-only (no GPU/CUDA setup needed), ~150-200MB model, MIT licensed.
+English, French, German, Spanish, Portuguese, and Italian only - **no
+Japanese**.
+
+**1. Record a reference clip - keep it short.** ~5-10 seconds of clean
+audio of you talking normally, no background noise. **This is important:
+a much longer clip (tested at 40-57s) produces garbled, screechy
+output** - Pocket TTS is a small model and isn't robust to a
+reference clip much longer than it expects, unlike XTTS below. Save it
+as a `.wav`/`.mp3` under `voice_samples/`, and point
+`CLONE_REFERENCE_AUDIO_PATH` in `config/settings.py` at it.
+
+**2. Install it:**
+
+```
+pip install pocket-tts
+```
+
+**3. Get access to the voice-cloning weights.** These are gated
+separately from the base model on Hugging Face (a responsible-use
+agreement, not a paywall - license is CC-BY-4.0):
+   - Create a free account at [huggingface.co](https://huggingface.co)
+     if needed, visit
+     [huggingface.co/kyutai/pocket-tts](https://huggingface.co/kyutai/pocket-tts),
+     and accept the terms shown there.
+   - Generate an access token (Settings → Access Tokens, "Read" preset)
+     and log in locally - the `hf` CLI (not the older `huggingface-cli`)
+     ships with `huggingface_hub`, but its install folder often isn't on
+     `PATH`:
+     ```powershell
+     & "$env:LOCALAPPDATA\Python\pythoncore-3.14-64\Scripts\hf.exe" auth login --token hf_YOUR_TOKEN
+     ```
+     (`--token` avoids a masked-input paste issue some terminals have
+     with the plain interactive prompt.) This persists to
+     `~/.cache/huggingface/token`, so it's picked up automatically after
+     that - no need to repeat it.
+
+**4. Run it** - `VOICE_ENGINE = "pocket"` is already the default:
+
+```
+py main.py
+```
+
+If the voice sounds garbled/screechy, the first thing to check is
+reference clip length (see step 1) - not a bug, a real model limitation
+discovered the hard way.
+
+### XTTS-v2 (alternate, `VOICE_ENGINE = "clone"`, GPU recommended)
+
+Heavier than Pocket TTS (bigger install, multi-GB model download, needs
+real compute) but multilingual, including Japanese - use this if you
+need a language Pocket TTS doesn't support.
+
+**1. Record a reference clip.** 15-30 seconds this time (XTTS tolerates
+a longer clip fine, unlike Pocket TTS above) of clean audio, saved as a
+`.wav` under `voice_samples/`.
 
 **2. Install PyTorch with CUDA support *before* the other requirements.**
 Check your GPU's CUDA version with `nvidia-smi` in PowerShell (top right
@@ -109,6 +164,31 @@ If anything fails to load, Great Sage prints why and falls back to
 text-only rather than crashing — check the message, it'll usually say
 exactly what's missing (reference audio not found, package not
 installed, model download failed, etc).
+
+**Speaking a different language than the chat text (e.g. Japanese).**
+Set `CLONE_LANGUAGE` (e.g. `"ja"`) and `CLONE_TRANSLATE = True` in
+`config/settings.py` to have each English reply translated right before
+it's spoken. Japanese additionally needs two more packages beyond the
+base list above:
+
+```
+pip install cutlet fugashi[unidic-lite]
+```
+
+`cutlet`'s dependency `mojimoji` has no precompiled wheel for any
+platform — it compiles from source, which needs a C compiler. On Windows
+without one installed already, this fails with `Microsoft Visual C++ 14.0
+or greater is required`; install "Desktop development with C++" from the
+[Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+installer, then retry the pip command above.
+
+### Pre-recorded voice lines (either engine)
+
+`VOICE_LINES` in `config/settings.py` maps fixed phrases the persona is
+instructed to say (matched against the reply text before any
+translation) to short pre-recorded audio clips that play instead of
+being synthesized — see NOTES.md for the current setup and its known
+limitations.
 
 ## Run
 
@@ -223,11 +303,26 @@ great_sage/
 - Single hardcoded system prompt with no persona customization UI.
 - No packaging/installer — this runs from source via `python main.py`,
   not as a standalone `.exe`.
+- Translating each reply before speaking it (`CLONE_TRANSLATE = True`)
+  costs a second, full model round-trip per message — noticeably more
+  latency before speech starts than speaking the reply text as-is.
+- Voice-line audio triggers (`VOICE_LINES`) match exact fixed phrasing
+  from the model's output; if the model varies that wording, a trigger
+  just silently doesn't fire rather than erroring.
+- `CLONE_LANGUAGE = "ja"` currently requires `cutlet`/`mojimoji`, which
+  needs a C compiler to install on Windows (see "Voice cloning" above) —
+  unresolved on at least one development machine as of this writing.
 
 ## What should be built next
 
-Roughly in order of natural dependency, not obligation — pick based on
-what's most useful next:
+**First: a stabilization pass**, not a new feature — the voice pipeline
+picked up real technical debt in one fast-moving session (see NOTES.md
+for detail): resolve the cutlet/Build-Tools decision above, add a
+`pytest` suite for the pure text-splitting logic that's already broken
+twice, and keep these docs in sync going forward.
+
+After that, roughly in order of natural dependency, not obligation — pick
+based on what's most useful next:
 
 1. **Voice input (speech-to-text)** — so you can talk instead of typing.
    The natural next step now that output works; it slots into the same

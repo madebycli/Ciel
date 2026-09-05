@@ -16,6 +16,7 @@ import re
 from typing import Callable, List, Optional, Pattern, Tuple
 
 from great_sage.voice.base import VoiceError, VoiceOutput
+from great_sage.voice.voice_lines import VoiceLine, split_voice_lines
 
 _XTTS_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
 
@@ -32,8 +33,6 @@ _CHAR_LIMITS = {
     "tr": 226, "ja": 71, "hu": 224, "ko": 95,
 }
 _DEFAULT_CHAR_LIMIT = 250
-
-VoiceLine = Tuple[Pattern, str]
 
 
 class XTTSClonedVoiceOutput(VoiceOutput):
@@ -150,38 +149,6 @@ class XTTSClonedVoiceOutput(VoiceOutput):
             chunks.append(sentence)
         return chunks
 
-    def _split_voice_lines(self, text: str) -> List[Tuple[str, str]]:
-        """Split text into ("tts", text) / ("audio", file_path) segments.
-
-        Scans for the earliest-matching configured voice-line trigger
-        (e.g. an opening "Notice." or a "Good morning, Master" greeting)
-        repeatedly, so a pre-recorded clip plays for that phrase instead
-        of it being synthesized, while the rest of the reply still goes
-        through the TTS pipeline as normal.
-        """
-        segments: List[Tuple[str, str]] = []
-        remaining = text
-        while remaining and self.voice_lines:
-            best_match = None
-            best_path = None
-            for pattern, path in self.voice_lines:
-                match = pattern.search(remaining)
-                if match and (
-                    best_match is None or match.start() < best_match.start()
-                ):
-                    best_match = match
-                    best_path = path
-            if best_match is None:
-                break
-            before = remaining[: best_match.start()].strip()
-            if before:
-                segments.append(("tts", before))
-            segments.append(("audio", best_path))
-            remaining = remaining[best_match.end():].strip()
-        if remaining:
-            segments.append(("tts", remaining))
-        return segments
-
     def _speak_tts_segment(self, text: str) -> None:
         if self._translator is not None:
             try:
@@ -226,14 +193,20 @@ class XTTSClonedVoiceOutput(VoiceOutput):
         if not text or not text.strip():
             return
         self._stop_requested = False
-        segments = self._split_voice_lines(text)
+        segments = split_voice_lines(text, self.voice_lines)
 
         try:
+            # latency="high" asks PortAudio for a larger internal buffer.
+            # Streamed XTTS chunks arrive in irregular bursts (each is a
+            # fresh model inference call, not steady like a file), so the
+            # default (low-latency, tight-buffer) stream setting can
+            # underrun between chunks and sound choppy - a bigger buffer
+            # trades a bit of latency for smoother playback.
             self._stream = self._sd.OutputStream(
-                samplerate=24000, channels=1, dtype="float32"
+                samplerate=24000, channels=1, dtype="float32", latency="high"
             )
             self._stream.start()
-            for kind, payload in segments:
+            for kind, payload, _spoken in segments:
                 if self._stop_requested:
                     break
                 if kind == "audio":

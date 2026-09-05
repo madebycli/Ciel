@@ -15,16 +15,43 @@ from great_sage.models.base import Message, ModelProvider, ModelProviderError
 
 
 class OllamaProvider(ModelProvider):
-    def __init__(self, host: str, model: str, timeout: int = 60):
+    def __init__(self, host: str, model: str, timeout: int = 60,
+                 think: bool = False):
+        """think=False disables a reasoning model's private deliberation.
+
+        This matters enormously for a spoken assistant. Ollama reports a
+        reasoning model's thinking in a SEPARATE "thinking" field, not as
+        content - so with it on, nothing arrives on the content stream
+        until the model has finished deliberating. Measured on qwen3:8b
+        with an identical question:
+
+            thinking on  -> first content at 14.13s (857 chars of it)
+            thinking off -> first content at  1.15s
+
+        Same model, same prompt, 12x difference in how long the user
+        waits before anything can be spoken. Off is the right default for
+        conversation; turn it on deliberately for a hard problem where
+        the extra time buys something.
+
+        Harmless on models without a thinking mode - Ollama ignores the
+        field, so llama3 and friends behave exactly as before.
+        """
         self.host = host.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.think = think
+
+    def _payload(self, messages: List[Message], stream: bool) -> dict:
+        body = {"model": self.model, "messages": messages, "stream": stream}
+        if self.think is not None:
+            body["think"] = self.think
+        return body
 
     def send_message(self, messages: List[Message]) -> str:
         try:
             response = requests.post(
                 f"{self.host}/api/chat",
-                json={"model": self.model, "messages": messages, "stream": False},
+                json=self._payload(messages, stream=False),
                 timeout=self.timeout,
             )
             response.raise_for_status()
@@ -52,7 +79,7 @@ class OllamaProvider(ModelProvider):
         try:
             response = requests.post(
                 f"{self.host}/api/chat",
-                json={"model": self.model, "messages": messages, "stream": True},
+                json=self._payload(messages, stream=True),
                 timeout=self.timeout,
                 stream=True,
             )

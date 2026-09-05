@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Great Sage - Live Logs</title>
+<style>
+  /* Deliberately mirrors hud_prototype.html's own vocabulary - same
+     background colour, same Consolas/monospace, same black panels with
+     hard 1-2px white outlines, same faint grid texture and thin white
+     scrollbar - so this reads as part of the same app rather than a
+     terminal that happens to be open next to it. */
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #030b08;
+    overflow: hidden;
+    font-family: Consolas, 'Courier New', monospace;
+    color: #ffffff;
+  }
+  #frame {
+    box-sizing: border-box;
+    display: flex; flex-direction: column;
+    height: 100%;
+    margin: 10px;
+    background: rgba(0, 0, 0, 0.9);
+    border: 2px solid #ffffff;
+  }
+
+  #titlebar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+    font-size: 12px; letter-spacing: 2px;
+    flex: 0 0 auto;
+    /* This window is frameless, so THIS is the title bar. pywebview's own
+       drag shim moves the window for any element carrying this class,
+       which is why it is applied in the markup below rather than using
+       app-region (ignored by this host). */
+    cursor: default;
+    user-select: none;
+  }
+  /* The buttons must not inherit the drag region, or they move the window
+     instead of firing. */
+  #titlebar button, #win-buttons { -webkit-app-region: no-drag; }
+  #win-buttons { display: flex; gap: 2px; margin-left: 8px; }
+  #win-buttons button {
+    width: 26px; padding: 3px 0; text-align: center;
+    letter-spacing: 0;
+  }
+  #win-close:hover { background: #c9302c !important; border-color: #e06a66 !important; }
+  #title { opacity: 0.75; }
+  #status { font-size: 11px; letter-spacing: 1px; margin-left: auto; }
+  #status.disconnected { opacity: 0.4; }
+  #status.connected { opacity: 0.85; }
+
+  button {
+    background: #000000; color: #ffffff; border: 1px solid #ffffff;
+    font-family: Consolas, monospace; font-size: 11px; padding: 3px 8px;
+    cursor: pointer;
+    transition: background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  }
+  button:hover {
+    background: #1a1a1a;
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+    transform: translateY(-1px);
+  }
+  button[aria-pressed="true"] { background: #1a1a1a; box-shadow: inset 0 0 0 1px #ffffff; }
+
+  #log {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.7;
+    /* Same fine grid as the HUD's settings panel, at the same strength. */
+    background-image:
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, transparent 1px, transparent 4px),
+      repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 1px, transparent 1px, transparent 4px);
+    scrollbar-width: thin;
+    scrollbar-color: #ffffff transparent;
+  }
+  #log::-webkit-scrollbar { width: 4px; }
+  #log::-webkit-scrollbar-track { background: transparent; }
+  #log::-webkit-scrollbar-thumb { background: #ffffff; border-radius: 2px; }
+
+  /* Levels are separated by brightness and a left accent rule rather
+     than by colour, to stay inside the HUD's strictly black/white
+     palette while still letting warnings and errors be picked out at a
+     glance when scrolling. */
+  .line {
+    white-space: pre-wrap; word-break: break-word;
+    padding-left: 8px;
+    border-left: 2px solid transparent;
+  }
+  .line .lvl { opacity: 0.5; }
+  .line.debug { opacity: 0.45; }
+  .line.info { opacity: 0.9; }
+  .line.warning { opacity: 1; border-left-color: rgba(255, 255, 255, 0.55); }
+  .line.error, .line.critical {
+    opacity: 1; border-left-color: #ffffff;
+    background: rgba(255, 255, 255, 0.07);
+  }
+  /* This viewer's own notes (connected / disconnected / cleared), kept
+     visually distinct from real log lines coming off the server. */
+  .line.meta { opacity: 0.55; font-style: italic; }
+
+  #empty { opacity: 0.35; padding: 10px 12px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="frame">
+  <div id="titlebar" class="pywebview-drag-region">
+    <span id="title">GREAT SAGE // LIVE LOGS</span>
+    <button id="btn-autoscroll" aria-pressed="true" title="Keep pinned to the newest line">AUTOSCROLL</button>
+    <button id="btn-clear" title="Clear what's on screen">CLEAR</button>
+    <span id="status" class="disconnected">connecting...</span>
+    <div id="win-buttons">
+      <button id="win-min" title="Minimise">&#8211;</button>
+      <button id="win-close" title="Close">&#10005;</button>
+    </div>
+  </div>
+  <div id="log"><div id="empty">Waiting for the Great Sage app...</div></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var logEl = document.getElementById('log');
+  var statusEl = document.getElementById('status');
+  var emptyEl = document.getElementById('empty');
+  var autoscrollBtn = document.getElementById('btn-autoscroll');
+  var clearBtn = document.getElementById('btn-clear');
+
+  // Cap on retained lines. A long-running session can emit a lot (every
+  // TTS generation logs several), and an unbounded DOM would slowly eat
+  // memory and make scrolling stutter in a window that's meant to just
+  // sit open in the background.
+  var MAX_LINES = 2000;
+  var autoscroll = true;
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = cls;
+  }
+
+  function append(level, message, isMeta) {
+    if (emptyEl) { emptyEl.remove(); emptyEl = null; }
+    var line = document.createElement('div');
+    line.className = 'line ' + (isMeta ? 'meta' : String(level || 'info').toLowerCase());
+    if (!isMeta) {
+      var lvl = document.createElement('span');
+      lvl.className = 'lvl';
+      lvl.textContent = '[' + String(level || 'INFO').toUpperCase() + '] ';
+      line.appendChild(lvl);
+    }
+    line.appendChild(document.createTextNode(message));
+    logEl.appendChild(line);
+
+    while (logEl.childElementCount > MAX_LINES) logEl.removeChild(logEl.firstElementChild);
+    if (autoscroll) logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  autoscrollBtn.addEventListener('click', function () {
+    autoscroll = !autoscroll;
+    autoscrollBtn.setAttribute('aria-pressed', String(autoscroll));
+    if (autoscroll) logEl.scrollTop = logEl.scrollHeight;
+  });
+  // Scrolling up by hand releases the pin, the way a terminal does -
+  // otherwise the next incoming line yanks you straight back down and
+  // reading anything mid-stream is impossible.
+  logEl.addEventListener('wheel', function () {
+    var atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 24;
+    if (!atBottom && autoscroll) {
+      autoscroll = false;
+      autoscrollBtn.setAttribute('aria-pressed', 'false');
+    }
+  });
+  clearBtn.addEventListener('click', function () {
+    logEl.innerHTML = '';
+    append(null, '-- cleared --', true);
+  });
+
+  // Same bridge and message shape the HUD itself uses (see server.py's
+  // protocol docstring): connect, declare ourselves a logs viewer, then
+  // receive one "log" message per formatted line.
+  var ws = null;
+  function connect() {
+    ws = new WebSocket('ws://localhost:8765');
+    ws.addEventListener('open', function () {
+      setStatus('connected', 'connected');
+      append(null, '-- connected --', true);
+      ws.send(JSON.stringify({ type: 'subscribe_logs' }));
+    });
+    ws.addEventListener('message', function (event) {
+      var msg;
+      try { msg = JSON.parse(event.data); } catch (err) { return; }
+      if (msg.type === 'log') append(msg.level, msg.message || '');
+    });
+    ws.addEventListener('close', function () {
+      setStatus('disconnected - retrying...', 'disconnected');
+      append(null, '-- disconnected, retrying --', true);
+      setTimeout(connect, 2000);
+    });
+    // 'error' always fires alongside 'close', so reconnecting is left to
+    // the close handler above to avoid stacking up two timers per drop.
+    ws.addEventListener('error', function () {});
+  }
+  connect();
+})();
+</script>
+<script>
+  // The window has no native chrome, so these are its only controls.
+  // pywebview exposes the functions on window.pywebview.api; if the
+  // bridge is missing (page opened directly in a browser) the buttons
+  // simply do nothing rather than throwing.
+  function host(fn) {
+    try {
+      const api = window.pywebview && window.pywebview.api;
+      if (api && typeof api[fn] === 'function') api[fn]();
+    } catch (err) { console.warn('host call failed', fn, err); }
+  }
+  document.getElementById('win-min')
+    .addEventListener('click', () => host('minimize'));
+  document.getElementById('win-close')
+    .addEventListener('click', () => host('close'));
+  // Escape closes it too - it is a transient inspection window.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') host('close');
+  });
+</script>
+</body>
+</html>

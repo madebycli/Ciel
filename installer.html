@@ -1,0 +1,190 @@
+<title>Great Sage Setup</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; height: 100%;
+    background: #070d14;
+    color: #cfe3f5;
+    font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+  }
+  #wrap { padding: 20px 22px; }
+  h1 {
+    margin: 0 0 2px; font-size: 17px; font-weight: 600;
+    letter-spacing: 2px; color: #e8f4ff;
+  }
+  .sub { margin: 0 0 16px; font-size: 11.5px; color: #7b95ad; }
+
+  .row {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 9px 10px; margin-bottom: 6px;
+    background: rgba(18, 32, 48, 0.55);
+    border: 1px solid rgba(90, 130, 170, 0.22);
+    border-radius: 5px;
+  }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%; margin-top: 5px;
+    flex: 0 0 auto; background: #55697d;
+  }
+  .ok   .dot { background: #4ad07a; box-shadow: 0 0 7px rgba(74,208,122,.55); }
+  .bad  .dot { background: #ff5f56; box-shadow: 0 0 7px rgba(255,95,86,.55); }
+  .warn .dot { background: #e8b84b; box-shadow: 0 0 7px rgba(232,184,75,.5); }
+  .body { flex: 1 1 auto; min-width: 0; }
+  .label { font-weight: 600; color: #e2eefb; }
+  .detail {
+    font-size: 11px; color: #7f97ad; margin-top: 1px;
+    overflow-wrap: anywhere;
+  }
+  .hint { font-size: 11px; color: #6c8398; margin-top: 3px; font-style: italic; }
+  .size { color: #c9a44b; font-style: normal; }
+
+  button {
+    flex: 0 0 auto; align-self: center;
+    background: rgba(40, 78, 116, 0.65);
+    border: 1px solid rgba(120, 175, 225, 0.4);
+    color: #dff0ff; border-radius: 4px;
+    font: 600 11px/1 "Segoe UI", sans-serif;
+    letter-spacing: .5px; padding: 7px 11px; cursor: pointer;
+  }
+  button:hover:not(:disabled) {
+    background: rgba(60, 110, 160, .8); border-color: rgba(160, 210, 255, .65);
+  }
+  button:disabled { opacity: .45; cursor: default; }
+
+  #actions {
+    display: flex; gap: 8px; margin-top: 14px; align-items: center;
+  }
+  #launch {
+    background: rgba(38, 105, 70, .75); border-color: rgba(110, 210, 150, .5);
+  }
+  #status { font-size: 11.5px; color: #8fa8bd; margin-left: auto; }
+
+  #log {
+    margin-top: 12px; padding: 9px 10px; height: 118px; overflow-y: auto;
+    display: none;
+    background: #04080d; border: 1px solid rgba(90, 130, 170, .22);
+    border-radius: 5px;
+    font: 11px/1.45 Consolas, "Cascadia Mono", monospace;
+    color: #8fb4d0; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  #log.show { display: block; }
+</style>
+
+<div id="wrap">
+  <h1>GREAT SAGE</h1>
+  <p class="sub">Checking what this machine still needs.</p>
+  <div id="rows"></div>
+  <div id="actions">
+    <button id="recheck">RE-CHECK</button>
+    <button id="launch" disabled>LAUNCH</button>
+    <span id="status">checking&hellip;</span>
+  </div>
+  <div id="log"></div>
+</div>
+
+<script>
+  const rowsEl = document.getElementById('rows');
+  const statusEl = document.getElementById('status');
+  const logEl = document.getElementById('log');
+  const launchBtn = document.getElementById('launch');
+  let busy = false;
+
+  function log(line) {
+    logEl.classList.add('show');
+    logEl.textContent += line + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  // The Python side is the source of truth for every status; this page
+  // only renders what it is told, so the checks cannot drift between the
+  // installer UI and the app's own startup check.
+  function render(items) {
+    rowsEl.innerHTML = '';
+    let blocking = 0;
+    items.forEach((r) => {
+      if (!r.ok && r.blocking) blocking++;
+      const row = document.createElement('div');
+      row.className = 'row ' + (r.ok ? 'ok' : (r.blocking ? 'bad' : 'warn'));
+
+      const dot = document.createElement('div');
+      dot.className = 'dot';
+      row.appendChild(dot);
+
+      const body = document.createElement('div');
+      body.className = 'body';
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = r.label;
+      body.appendChild(label);
+      const detail = document.createElement('div');
+      detail.className = 'detail';
+      detail.textContent = r.detail || '';
+      body.appendChild(detail);
+      if (!r.ok && (r.fix_hint || r.size_hint)) {
+        const hint = document.createElement('div');
+        hint.className = 'hint';
+        hint.textContent = r.fix_hint || '';
+        if (r.size_hint) {
+          const s = document.createElement('span');
+          s.className = 'size';
+          s.textContent = '  ' + r.size_hint;
+          hint.appendChild(s);
+        }
+        body.appendChild(hint);
+      }
+      row.appendChild(body);
+
+      // Only offer a button where there is something we can actually do.
+      if (!r.ok && (r.fix_command || r.fix_url)) {
+        const b = document.createElement('button');
+        b.textContent = r.fix_url ? 'DOWNLOAD' : 'INSTALL';
+        b.disabled = busy;
+        b.addEventListener('click', () => fix(r.key, b));
+        row.appendChild(b);
+      }
+      rowsEl.appendChild(row);
+    });
+
+    launchBtn.disabled = blocking > 0 || busy;
+    statusEl.textContent = blocking === 0
+      ? 'Ready to launch.'
+      : blocking + ' item' + (blocking === 1 ? '' : 's') + ' still needed.';
+  }
+
+  async function refresh() {
+    statusEl.textContent = 'checking…';
+    render(await window.pywebview.api.check());
+  }
+
+  async function fix(key, btn) {
+    busy = true;
+    btn.disabled = true;
+    btn.textContent = 'WORKING…';
+    statusEl.textContent = 'working…';
+    log('> fixing: ' + key);
+    const res = await window.pywebview.api.fix(key);
+    log(res && res.message ? res.message : 'done');
+    // A download hands off to the browser, so the result only arrives when
+    // the user comes back and re-checks.
+    busy = false;
+    await refresh();
+  }
+
+  document.getElementById('recheck').addEventListener('click', refresh);
+  launchBtn.addEventListener('click', async () => {
+    launchBtn.disabled = true;
+    statusEl.textContent = 'starting…';
+    await window.pywebview.api.launch();
+  });
+
+  // pywebviewready fires once the api object exists; calling before it
+  // would throw on a cold start. Latched because BOTH paths below can be
+  // live on a warm start - the second call then overwrote the finished
+  // status with "checking..." and left the window looking hung.
+  let started = false;
+  const startOnce = () => { if (!started) { started = true; refresh(); } };
+  window.addEventListener('pywebviewready', startOnce);
+  if (window.pywebview && window.pywebview.api) startOnce();
+
+  // Streamed output from long commands (the model pull especially).
+  window.__setupLog = log;
+</script>

@@ -30,3 +30,31 @@ voice_samples/*
 # OS cruft
 Thumbs.db
 .DS_Store
+
+# HUD app runtime log (run_hud.py)
+great_sage_hud.log
+
+# Long-term memory file - personal facts about whoever is running this,
+# not something to track in version control.
+memory.txt
+.jbb_cache/
+build/
+dist/
+*.spec.bak
+
+# Python 3.11 venv holding PySide6 6.4.3 for the transparent overlay.
+# Recreate with:  py -3.11 -m venv .overlay-venv
+#                 .overlay-venv\Scripts\pip install PySide6==6.4.3
+.overlay-venv/
+
+# Runtime state, per-machine.
+great_sage.log
+great_sage_hud.log
+
+# Abandoned venv from the packaging investigation. The overlay builds from
+# .overlay-venv; this one only ever held pip.
+.build311/
+
+# Per-machine runtime state, not source (spec S0: keep user data separate).
+hud_settings.json
+voice_line_prefs.json
