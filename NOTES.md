@@ -649,3 +649,62 @@ A real synthesis test must check the reply text against every pattern in
 `VOICE_LINE_SETS` and require a miss. Ask for a long, specific sentence -
 the lighthouse prompt gives ~18 words and ~326KB of audio, versus ~25KB
 for a canned clip.
+
+---
+
+## Model selection (spec Phase 2, decided)
+
+**Primary model: `qwen3.5:4b`.** Measured here, RTX 3060 12.9GB, with
+F5-TTS resident at 0.8GB:
+
+| model | VRAM | load | warm turn | spec S34 role test |
+|---|---|---|---|---|
+| qwen2.5:3b | 2.2GB | 4.2s | 1.2s | FAILS - "I will proceed with configuring" |
+| qwen2.5:7b | 4.7GB | 11.7s | 1.4s | correct but terse |
+| **qwen3.5:4b** | **3.1GB** | **4.2s** | **1.3s** | correct + volunteers the capability is absent |
+| llama3 | 5.0GB | - | - | worse than 3b (ordering 1/5, sheep 3/5) |
+| qwen3-vl:8b | 6.1GB | - | - | redundant; 4b already does vision |
+| qwen3.5:27b | 17GB | - | - | does NOT fit this card |
+
+`qwen3.5:4b` is multimodal - verified by handing it a real screenshot,
+which it read correctly (named the application, a URL, and filenames). So
+spec S41 screen awareness needs no second model and no extra VRAM.
+
+3.1 + 0.8 = 3.9GB, leaving ~9GB free. That headroom was the actual
+requirement: gaming and calls run alongside Great Sage.
+
+**Do not switch to llama3.** It was recommended once on a single sample
+and that was wrong - over 5 trials it lost to the 3B it was meant to
+replace, at more than double the VRAM.
+
+### The prompt mattered as much as the model
+
+The reported symptom - Great Sage "seeming dumb", needing the same point
+rephrased eight times - was reproduced and traced to the 7,208-character
+system prompt, not only to model size. Same model, same three turns:
+
+    long prompt  -> "I will proceed with configuring and testing to
+                     fulfill your request"        WRONG - Master builds it
+    compact      -> "you will implement web access into Great Sage
+                     yourself"                    correct
+
+The replacement is 2,925 characters and is NOT spec S13's generic text.
+That would have silently deleted five load-bearing things: the trigger
+phrases `voice_lines.py` matches to fire the recorded clips, the "as an
+AI" ban, the instruction-integrity hardening, non-disclosure, and the
+Daikenja identity. What was cut instead: the BAD/GOOD example pairs, the
+expanded VOICE section, and rules restated three ways.
+
+Verified equal or better, not merely shorter: identity leaks 0/6 versus
+the legacy prompt's 1/6, role test 0/3 for both, trigger phrases still
+firing. `SYSTEM_PROMPT_LEGACY` is kept - `set GREAT_SAGE_PROMPT=legacy`.
+
+### Testing note: a chat test can lie
+
+Counting returned audio bytes does NOT prove synthesis works. Short
+replies match `VOICE_LINE_SETS` and play a PRE-RECORDED clip instead.
+"Good morning, Master." and "Not yet acquired." are both canned, and both
+returned healthy-looking audio from a build whose F5 path was broken.
+A real test must send a SECOND turn (the first always triggers session
+start) and check the reply against every pattern in `VOICE_LINE_SETS`.
+Real synthesis is ~380KB for a 20-word sentence; a clip is ~25KB.
