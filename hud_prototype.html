@@ -7212,12 +7212,8 @@ const MINI_CHAT_PAD = 3;
 
     item('Delete', true, () => {
       // Spec S7: deletion needs a second confirmation.
-      if (!window.confirm('Delete this conversation?
-
-"' + topic.title +
-                          '"
-
-This cannot be undone.')) return;
+      if (!window.confirm('Delete this conversation?\n\n"' + topic.title +
+                          '"\n\nThis cannot be undone.')) return;
       const wasActive = topic.id === activeTopicId;
       chatTopics.splice(chatTopics.indexOf(topic), 1);
       if (wasActive) {
@@ -7269,7 +7265,7 @@ This cannot be undone.')) return;
       const menuBtn = document.createElement('button');
       menuBtn.className = 'topic-menu-btn';
       menuBtn.type = 'button';
-      menuBtn.textContent = '⋯';          // midline horizontal ellipsis
+      menuBtn.textContent = '\u22EF';          // midline horizontal ellipsis
       menuBtn.title = 'Chat options';
       menuBtn.addEventListener('click', (e) => {
         e.stopPropagation();                  // don't also select the row

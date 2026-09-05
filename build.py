@@ -86,6 +86,16 @@ def build_overlay():
 
 
 def build_app():
+    # The HUD page is one big inline script, so a single broken string
+    # literal is a SyntaxError that kills ALL of it: the window opens
+    # black, never connects, and sits on "connecting..." - with a
+    # perfectly healthy Python log, because the failure is in the page.
+    # That shipped once. It is checked BEFORE the build now.
+    for _script in ("check_js.py", "check_shaders.py"):
+        if subprocess.run([sys.executable, _script], cwd=HERE).returncode:
+            raise SystemExit(
+                chr(10) + _script + " failed - refusing to build a bundle "
+                "whose HUD cannot render.")
     _check_locked(APP_DIST)
     _run([sys.executable, "-m", "PyInstaller", "--noconfirm", "great_sage.spec"],
          "App bundle (Python 3.14 / torch + F5-TTS)")
