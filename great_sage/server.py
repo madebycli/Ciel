@@ -1026,7 +1026,11 @@ async def run_server(engine, voice) -> None:
         """
         try:
             saved = hud_settings.load(settings.HUD_SETTINGS_PATH)
-            combo = (saved.get("hud_settings") or saved).get("ptt-combo")
+            # save_hud_settings stores the page blob under "hud".
+            # Reading "hud_settings" found nothing and silently fell
+            # back to the default, so a chosen key was forgotten at
+            # the next launch - live rebinding worked, which hid it.
+            combo = (saved.get("hud") or {}).get("ptt-combo")
             if isinstance(combo, str) and combo.strip():
                 return combo.strip()
         except Exception:
