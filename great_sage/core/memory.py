@@ -153,3 +153,32 @@ def save_facts(path: str, new_facts: List[str], max_facts: int) -> List[str]:
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(merged) + ("\n" if merged else ""))
     return merged
+
+def write_facts(path: str, facts: List[str]) -> int:
+    """Replace the whole file. Returns how many facts were written.
+
+    Needed by the memory manager (spec S46): deleting or editing a fact
+    is a rewrite, not an append, and save_facts only ever adds.
+
+    Written through a temp file and os.replace so an interrupted write
+    cannot leave a half-file - this is the user's long-term memory, and
+    a truncated one would silently lose facts with nothing to notice it.
+    """
+    import os
+    import tempfile
+    clean = [f.strip() for f in facts if f and f.strip()]
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            for fact in clean:
+                fh.write(fact + chr(10))
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        raise
+    return len(clean)

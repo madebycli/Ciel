@@ -830,6 +830,44 @@
   }
   .topic-item:hover { opacity: 1; background: rgba(255,255,255,0.06); }
   .topic-item.active { opacity: 1; border-left-color: #ffffff; background: rgba(255,255,255,0.08); }
+  .panel-note { opacity: 0.55; font-size: 11px; line-height: 1.5; margin: 6px 0 10px; }
+  #memory-search {
+    width: 100%; box-sizing: border-box; padding: 7px 9px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(120,190,255,0.25);
+    color: #dff0ff; font: inherit; letter-spacing: 0.04em; border-radius: 3px;
+  }
+  #memory-search:focus { outline: none; border-color: rgba(160,215,255,0.6); }
+  #memory-list { margin-top: 10px; max-height: 320px; overflow-y: auto; }
+  #memory-list .empty { opacity: 0.5; }
+  .memory-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 7px 4px 7px 8px;
+    border-left: 2px solid rgba(120,190,255,0.28);
+    margin-bottom: 6px; line-height: 1.5;
+  }
+  .memory-item-text { flex: 1; min-width: 0; word-break: break-word; }
+  /* Spec S46: a compact 1:1 delete control on the right of each row. */
+  .memory-del {
+    flex: 0 0 auto; width: 20px; height: 20px; line-height: 18px;
+    text-align: center; padding: 0; cursor: pointer;
+    background: none; border: 1px solid rgba(255,255,255,0.18);
+    color: rgba(255,160,160,0.85); border-radius: 3px; font-size: 12px;
+    opacity: 0; transition: opacity 0.12s ease;
+  }
+  .memory-item:hover .memory-del { opacity: 1; }
+  .memory-del:hover { background: rgba(255,90,90,0.2); color: #fff; }
+  #memory-actions {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 12px; font-size: 11px; opacity: 0.75;
+  }
+  #memory-clear-btn {
+    background: none; border: 1px solid rgba(255,120,120,0.35);
+    color: #ffb0b0; padding: 5px 10px; cursor: pointer;
+    font: inherit; letter-spacing: 0.06em; border-radius: 3px;
+  }
+  #memory-clear-btn:hover { background: rgba(255,90,90,0.18); color: #fff; }
+
   .topic-menu-btn {
     background: none; border: 0; cursor: pointer; padding: 0 4px;
     color: rgba(220,240,255,0.55); font-size: 15px; line-height: 1;
@@ -1285,6 +1323,10 @@ body.mini:hover #mini-exit { opacity: 1; }
     <div class="wheel-item-half"></div>
     <span class="wheel-item-label">HISTORY</span>
   </div>
+  <div class="wheel-item" data-target="memory">
+    <div class="wheel-item-half"></div>
+    <span class="wheel-item-label">MEMORY</span>
+  </div>
   <div class="wheel-item" data-target="logs">
     <div class="wheel-item-half"></div>
     <span class="wheel-item-label">LOGS</span>
@@ -1394,6 +1436,19 @@ body.mini:hover #mini-exit { opacity: 1; }
     </svg>
     <div id="center-panel-warp">
     <div id="center-panel">
+
+    <section id="panel-section-memory" class="panel-section">
+      <h4>MEMORY</h4>
+      <p class="panel-note">What Great Sage has kept about you. Deleting a
+         line here removes it permanently.</p>
+      <input id="memory-search" type="text" placeholder="Search memory..."
+             autocomplete="off" />
+      <div id="memory-list"><div class="empty">(nothing remembered yet)</div></div>
+      <div id="memory-actions">
+        <span id="memory-count"></span>
+        <button id="memory-clear-btn" type="button">Clear all</button>
+      </div>
+    </section>
 
     <section id="panel-section-history" class="panel-section">
       <h4>CONVERSATION HISTORY</h4>
@@ -4589,6 +4644,12 @@ const MINI_CHAT_PAD = 3;
         saveChats();
       }
       if (msg.text) window.alert(msg.text);
+    } else if (msg.type === 'memory') {
+      // The server is the single source of truth here: every change is
+      // answered with the resulting list, so the panel never has to guess
+      // whether a delete actually landed.
+      memoryFacts = Array.isArray(msg.facts) ? msg.facts : [];
+      renderMemory();
     } else if (msg.type === 'chats') {
       // Saved conversations, sent by the server on connect (spec S6).
       // Replaces the in-memory list rather than merging: this arrives
@@ -6584,7 +6645,8 @@ const MINI_CHAT_PAD = 3;
       // inline panel would have to fit a 340px square, which is why it
       // was unreadable there however it was styled.
       if (window.__isStandaloneOverlay && (target === 'settings'
-                                           || target === 'history')) {
+                                           || target === 'history'
+                                           || target === 'memory')) {
         requestPanelWindow(target);
         return;
       }
@@ -7153,6 +7215,70 @@ const MINI_CHAT_PAD = 3;
   }
   function currentTopic() {
     return chatTopics.find((t) => t.id === activeTopicId);
+  }
+
+  // ---------- Memory manager (spec S46) ----------
+  let memoryFacts = [];
+  const memoryListEl = document.getElementById('memory-list');
+  const memorySearchEl = document.getElementById('memory-search');
+  const memoryCountEl = document.getElementById('memory-count');
+
+  function renderMemory() {
+    if (!memoryListEl) return;
+    const q = (memorySearchEl && memorySearchEl.value || '').trim().toLowerCase();
+    const shown = q ? memoryFacts.filter((f) => f.toLowerCase().includes(q))
+                    : memoryFacts.slice();
+    memoryListEl.innerHTML = '';
+    if (!shown.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = memoryFacts.length
+        ? '(nothing matches that search)'
+        : '(nothing remembered yet)';
+      memoryListEl.appendChild(empty);
+    } else {
+      shown.forEach((fact) => {
+        const row = document.createElement('div');
+        row.className = 'memory-item';
+        const text = document.createElement('div');
+        text.className = 'memory-item-text';
+        text.textContent = fact;
+        row.appendChild(text);
+        const del = document.createElement('button');
+        del.className = 'memory-del';
+        del.type = 'button';
+        del.textContent = 'x';
+        del.title = 'Forget this';
+        del.addEventListener('click', () => {
+          // No confirm for a single line: it is one fact, the list is
+          // right there, and a prompt per row would make tidying memory
+          // tedious. Clear all DOES confirm - that one is not recoverable.
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'delete_memory', fact }));
+          }
+        });
+        row.appendChild(del);
+        memoryListEl.appendChild(row);
+      });
+    }
+    if (memoryCountEl) {
+      memoryCountEl.textContent = q
+        ? shown.length + ' of ' + memoryFacts.length + ' shown'
+        : memoryFacts.length + (memoryFacts.length === 1 ? ' memory' : ' memories');
+    }
+  }
+  if (memorySearchEl) memorySearchEl.addEventListener('input', renderMemory);
+  const memoryClearBtn = document.getElementById('memory-clear-btn');
+  if (memoryClearBtn) {
+    memoryClearBtn.addEventListener('click', () => {
+      if (!memoryFacts.length) return;
+      if (!window.confirm('Forget everything Great Sage has remembered?' +
+          String.fromCharCode(10) + String.fromCharCode(10) +
+          memoryFacts.length + ' memories will be deleted. This cannot be undone.')) return;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'clear_memory' }));
+      }
+    });
   }
 
   // Push the whole list to the server, coalesced: a burst of edits (the

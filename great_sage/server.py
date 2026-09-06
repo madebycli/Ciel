@@ -161,7 +161,8 @@ import sounddevice as sd
 import websockets
 
 from great_sage.config import settings
-from great_sage.core import (chat_store, guardrails, hud_settings, personality,
+from great_sage.core import (chat_store, guardrails, hud_settings, memory,
+                             personality,
                              voice_line_prefs)
 from great_sage.core.metrics import ResponseTimer
 from great_sage.log_broadcast import BroadcastLogHandler
@@ -649,6 +650,14 @@ async def run_server(engine, voice) -> None:
             pass
         except Exception:
             log.exception("Could not restore saved chats")
+        try:
+            await websocket.send(json.dumps({
+                "type": "memory",
+                "facts": memory.load_memory(settings.MEMORY_FILE_PATH)}))
+        except websockets.exceptions.ConnectionClosed:
+            pass
+        except Exception:
+            log.exception("Could not send the memory list")
         if voice is not None and hasattr(voice, "list_voice_lines"):
             try:
                 from main import active_voice_line_set
@@ -808,6 +817,30 @@ async def run_server(engine, voice) -> None:
                         asyncio.run_coroutine_threadsafe(
                             websocket.send(payload_out), loop)
                     threading.Thread(target=_run, daemon=True).start()
+                elif msg_type in ("list_memory", "delete_memory",
+                                  "clear_memory"):
+                    # The memory manager (spec S46). Deletion rewrites the
+                    # file rather than appending, so it goes through
+                    # memory.write_facts, and the client is always sent the
+                    # resulting list rather than trusting its own copy.
+                    try:
+                        facts = memory.load_memory(settings.MEMORY_FILE_PATH)
+                        if msg_type == "delete_memory":
+                            target = str(data.get("fact", ""))
+                            facts = [f for f in facts if f != target]
+                            memory.write_facts(settings.MEMORY_FILE_PATH, facts)
+                            log.info("Memory: deleted 1 fact, %d remain",
+                                     len(facts))
+                        elif msg_type == "clear_memory":
+                            memory.write_facts(settings.MEMORY_FILE_PATH, [])
+                            facts = []
+                            log.info("Memory: cleared")
+                        await websocket.send(json.dumps(
+                            {"type": "memory", "facts": facts}))
+                    except websockets.exceptions.ConnectionClosed:
+                        pass
+                    except Exception:
+                        log.exception("%s failed", msg_type)
                 elif msg_type == "save_chats":
                     # Whole-list save; see core/chat_store.py for why.
                     try:
