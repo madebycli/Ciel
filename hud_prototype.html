@@ -1040,6 +1040,18 @@
     opacity: 0.45;
   }
   #chat-model-provider:not(:empty)::before { content: " · "; }
+  /* A selector, but deliberately quiet: Great Sage is the identity, the
+     model is the brain underneath (spec S6). It must not out-shout the
+     name above it, so it is borderless and inherits the dim style. */
+  #center-panel #chat-model-select {
+    width: auto; background: none; border: 0;
+    color: inherit; font: inherit; letter-spacing: inherit;
+    padding: 0; margin: 0; cursor: pointer;
+  }
+  #center-panel #chat-model-select:hover { color: rgba(230,242,255,0.9); }
+  #center-panel #chat-model-select option {
+    background: #06100c; color: #e6f0f8;
+  }
 
 
   .panel-note { opacity: 0.55; font-size: 11px; line-height: 1.5; margin: 6px 0 10px; }
@@ -1670,7 +1682,7 @@ body.mini:hover #mini-exit { opacity: 1; }
           <header id="chat-identity">
             <div id="chat-identity-name">UNIQUE SKILL: GREAT SAGE</div>
             <div id="chat-identity-model">
-              <span id="chat-model-name">-</span><span id="chat-model-provider"></span>
+              <select id="chat-model-select" title="Model powering Great Sage"></select><span id="chat-model-provider"></span>
             </div>
           </header>
 
@@ -4936,7 +4948,7 @@ const MINI_CHAT_PAD = 3;
         saveChats();
       }
     } else if (msg.type === 'model_info') {
-      setChatIdentity(msg.model, msg.provider);
+      setChatIdentity(msg.model, msg.provider, msg.available);
     } else if (msg.type === 'memory') {
       // The server is the single source of truth here: every change is
       // answered with the resulting list, so the panel never has to guess
@@ -7708,12 +7720,38 @@ const MINI_CHAT_PAD = 3;
   // Identity header. The model name is filled in from the server so
   // switching models never edits this file - and Great Sage's name stays
   // the same whichever model is underneath.
-  function setChatIdentity(model, provider) {
-    const m = document.getElementById('chat-model-name');
+  function setChatIdentity(model, provider, available) {
+    const sel = document.getElementById('chat-model-select');
     const p = document.getElementById('chat-model-provider');
-    if (m) m.textContent = model || '-';
     if (p) p.textContent = provider || '';
+    if (!sel) return;
+    const list = (available && available.length) ? available
+                 : (model ? [model] : []);
+    // Rebuild only when the set changed, so opening the dropdown while a
+    // model_info arrives does not yank it shut.
+    const same = sel.options.length === list.length &&
+      [...sel.options].every((o, i) => o.value === list[i]);
+    if (!same) {
+      sel.innerHTML = '';
+      list.forEach((name) => {
+        const o = document.createElement('option');
+        o.value = name; o.textContent = name;
+        sel.appendChild(o);
+      });
+    }
+    if (model) sel.value = model;
   }
+  (() => {
+    const sel = document.getElementById('chat-model-select');
+    if (!sel) return;
+    sel.addEventListener('change', () => {
+      // Great Sage's identity is unchanged by this - only the brain
+      // underneath. History, memory, persona and tools all stay put.
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'set_model', model: sel.value }));
+      }
+    });
+  })();
 
   // ---------- Memory manager (spec S46) ----------
   let memoryFacts = [];

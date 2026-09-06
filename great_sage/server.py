@@ -357,6 +357,23 @@ def _summarise_chat(provider, title, messages):
     return provider.send_message([{"role": "user", "content": prompt}]).strip()
 
 
+def _installed_models():
+    """Model names Ollama actually has, for the chat-mode selector.
+
+    Asked at runtime rather than listed in settings, so pulling a new
+    model makes it selectable without editing anything - spec S6 asks
+    that Qwen3.5 not be hard-coded as the permanent model.
+    """
+    try:
+        import requests
+        r = requests.get(settings.OLLAMA_HOST + "/api/tags", timeout=6)
+        names = [m.get("name", "") for m in r.json().get("models", [])]
+        return sorted(n for n in names if n)
+    except Exception:
+        log.exception("Could not list installed models")
+        return []
+
+
 def _suggest_title(provider, messages):
     """A short topic name for the sidebar, from the opening exchange.
 
@@ -797,8 +814,10 @@ async def run_server(engine, voice) -> None:
             # models never means editing the page.
             await websocket.send(json.dumps({
                 "type": "model_info",
-                "model": settings.OLLAMA_DEFAULT_MODEL,
-                "provider": "Ollama / Local"}))
+                "model": getattr(engine.provider, "model",
+                                 settings.OLLAMA_DEFAULT_MODEL),
+                "provider": "Ollama / Local",
+                "available": _installed_models()}))
             await websocket.send(json.dumps({
                 "type": "memory",
                 "facts": memory.load_memory(settings.MEMORY_FILE_PATH)}))
@@ -936,6 +955,21 @@ async def run_server(engine, voice) -> None:
                                     await websocket.send(json.dumps({"type": "error", "message": str(exc)}))
                                 except websockets.exceptions.ConnectionClosed:
                                     pass
+                elif msg_type == "set_model":
+                    # Great Sage's identity does not change with the model
+                    # (spec S6) - only the brain underneath does, so this
+                    # swaps the provider's model and leaves history, memory,
+                    # persona and tools exactly as they were.
+                    want = str(data.get("model") or "").strip()
+                    if want and want in _installed_models():
+                        engine.provider.model = want
+                        log.info("Model switched to %s", want)
+                        await websocket.send(json.dumps({
+                            "type": "model_info", "model": want,
+                            "provider": "Ollama / Local",
+                            "available": _installed_models()}))
+                    else:
+                        log.warning("Refused model switch to %r", want)
                 elif msg_type == "suggest_title":
                     def _title(payload=data):
                         t = _suggest_title(engine.provider,
