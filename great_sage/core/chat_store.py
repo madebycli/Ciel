@@ -29,6 +29,10 @@ log = logging.getLogger(__name__)
 # Enough for a long history without letting the file grow without bound.
 MAX_CHATS = 200
 MAX_MESSAGES_PER_CHAT = 500
+MAX_IMAGES_PER_MESSAGE = 4
+# ~400KB of base64, comfortably above a 240px JPEG thumbnail
+# and well below anything that would bloat the file.
+MAX_IMAGE_CHARS = 400_000
 
 
 def _sanitise(chats: Any) -> List[Dict[str, Any]]:
@@ -46,12 +50,23 @@ def _sanitise(chats: Any) -> List[Dict[str, Any]]:
             continue
         msgs = c.get("messages")
         msgs = msgs if isinstance(msgs, list) else []
-        clean_msgs = [
-            {"role": str(m.get("role", ""))[:32],
-             "text": str(m.get("text", ""))}
-            for m in msgs[-MAX_MESSAGES_PER_CHAT:]
-            if isinstance(m, dict)
-        ]
+        clean_msgs = []
+        for m in msgs[-MAX_MESSAGES_PER_CHAT:]:
+            if not isinstance(m, dict):
+                continue
+            entry = {"role": str(m.get("role", ""))[:32],
+                     "text": str(m.get("text", ""))}
+            # Thumbnails only, and capped. The page stores downscaled
+            # copies rather than what was sent to the model - a full
+            # screenshot is hundreds of KB of base64, and a few of those
+            # per chat would dominate this file.
+            imgs = m.get("images")
+            if isinstance(imgs, list):
+                kept = [str(i) for i in imgs[:MAX_IMAGES_PER_MESSAGE]
+                        if isinstance(i, str) and len(i) <= MAX_IMAGE_CHARS]
+                if kept:
+                    entry["images"] = kept
+            clean_msgs.append(entry)
         out.append({
             "id": c["id"],
             "title": str(c.get("title") or "New chat")[:120],

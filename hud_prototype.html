@@ -239,6 +239,60 @@
     background: rgba(255,110,110,0.18); color: #fff;
   }
 
+  #chat-identity { display: flex; align-items: flex-start; gap: 10px; }
+  #chat-identity-text { flex: 1 1 auto; min-width: 0; }
+  #center-panel #ai-settings-btn {
+    flex: 0 0 auto; width: 24px; height: 24px; padding: 0;
+    background: none; border: 1px solid rgba(255,255,255,0.22);
+    color: rgba(226,236,244,0.65); cursor: pointer;
+    font-size: 13px; line-height: 22px;
+  }
+  #center-panel #ai-settings-btn:hover {
+    color: #fff; border-color: rgba(255,255,255,0.55);
+  }
+  #center-panel #ai-settings-btn.active {
+    background: rgba(240,246,252,0.9); color: #06100c;
+    border-color: rgba(255,255,255,0.85);
+  }
+  .ai-set-group { margin-bottom: 13px; }
+  .ai-set-group > label {
+    display: block; font-size: 10px; letter-spacing: 0.14em;
+    opacity: 0.6; margin-bottom: 4px;
+  }
+  #center-panel .ai-set-group input[type="password"],
+  #center-panel .ai-set-group select {
+    width: 100%; box-sizing: border-box; padding: 6px 9px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.24);
+    color: #e8f2ff; font: inherit; letter-spacing: 0.04em;
+  }
+  #center-panel .ai-set-group input:focus,
+  #center-panel .ai-set-group select:focus {
+    outline: none; border-color: rgba(255,255,255,0.6);
+  }
+  #center-panel .ai-set-group select option { background: #06100c; }
+  .ai-set-hint {
+    display: block; margin-top: 3px; font-size: 10px; opacity: 0.4;
+  }
+  .ai-set-toggles label {
+    display: block; font-size: 11px; opacity: 0.85;
+    letter-spacing: 0.04em; margin-bottom: 5px; cursor: pointer;
+  }
+  .ai-set-toggles input { margin-right: 7px; }
+  .ai-set-actions {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 16px; border-top: 1px solid rgba(255,255,255,0.14);
+    padding-top: 12px;
+  }
+  #ai-set-status { font-size: 10px; opacity: 0.55; }
+  #center-panel #ai-set-save {
+    width: auto; padding: 5px 16px; background: none;
+    border: 1px solid rgba(255,255,255,0.3);
+    color: rgba(232,242,255,0.85); cursor: pointer;
+    font: inherit; font-size: 10px; letter-spacing: 0.14em;
+  }
+  #center-panel #ai-set-save:hover { color: #fff; border-color: rgba(255,255,255,0.65); }
+
   #chat-attach {
     flex: 0 0 auto; width: 26px; height: 26px; line-height: 24px;
     padding: 0; background: none;
@@ -252,6 +306,7 @@
     border-color: rgba(255,255,255,0.85);
   }
   #chat-bar {
+    flex-direction: column; align-items: stretch; gap: 0;
     /* ONE bordered container holding attach / input / THINK / SEND,
        rather than four separate outlined boxes sitting next to each
        other. Same arrangement modern chat apps use, drawn in Great
@@ -287,6 +342,32 @@
     border-color: rgba(255,255,255,0.9);
   }
   #chat-bar #ws-status { font-size: 9px; opacity: 0.45; }
+  #chat-input-row { display: flex; align-items: center; gap: 8px; }
+  #chat-attachments {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    padding-bottom: 9px; margin-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.14);
+  }
+  #chat-attachments[hidden] { display: none; }
+  .chat-attachment {
+    position: relative; width: 56px; height: 56px;
+    border: 1px solid rgba(255,255,255,0.28);
+    background: rgba(0,0,0,0.5);
+  }
+  .chat-attachment img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #center-panel .chat-attachment button {
+    position: absolute; top: -7px; right: -7px;
+    width: 16px; height: 16px; padding: 0; line-height: 14px;
+    background: #06100c; border: 1px solid rgba(255,255,255,0.45);
+    color: #fff; font-size: 10px; cursor: pointer;
+  }
+  /* Images inside the transcript. Capped so a screenshot does not push
+     the conversation off the panel. */
+  .history-entry img {
+    display: block; max-width: 260px; max-height: 200px;
+    margin: 6px 0 2px; border: 1px solid rgba(255,255,255,0.22);
+  }
+  .history-entry.user img { margin-left: auto; }
   /* [hidden] alone loses to the explicit `display:flex` above (an ID
      rule always beats the UA default [hidden]{display:none} stylesheet)
      - this one's more specific than plain #chat-bar so it wins instead. */
@@ -1040,18 +1121,7 @@
     opacity: 0.45;
   }
   #chat-model-provider:not(:empty)::before { content: " · "; }
-  /* A selector, but deliberately quiet: Great Sage is the identity, the
-     model is the brain underneath (spec S6). It must not out-shout the
-     name above it, so it is borderless and inherits the dim style. */
-  #center-panel #chat-model-select {
-    width: auto; background: none; border: 0;
-    color: inherit; font: inherit; letter-spacing: inherit;
-    padding: 0; margin: 0; cursor: pointer;
-  }
-  #center-panel #chat-model-select:hover { color: rgba(230,242,255,0.9); }
-  #center-panel #chat-model-select option {
-    background: #06100c; color: #e6f0f8;
-  }
+
 
 
   .panel-note { opacity: 0.55; font-size: 11px; line-height: 1.5; margin: 6px 0 10px; }
@@ -1680,9 +1750,13 @@ body.mini:hover #mini-exit { opacity: 1; }
                Sage. Which model is underneath is technical detail, and is
                styled as such. -->
           <header id="chat-identity">
+            <div id="chat-identity-text">
             <div id="chat-identity-name">UNIQUE SKILL: GREAT SAGE</div>
             <div id="chat-identity-model">
-              <select id="chat-model-select" title="Model powering Great Sage"></select><span id="chat-model-provider"></span>
+              <span id="chat-model-name">-</span><span id="chat-model-provider"></span>
+            </div>
+            <button id="ai-settings-btn" type="button"
+                    title="AI settings - API keys, providers, permissions">&#9881;</button>
             </div>
           </header>
 
@@ -1692,6 +1766,59 @@ body.mini:hover #mini-exit { opacity: 1; }
 
           <!-- The SAME memory backend, shown here instead of in the core
                menu. One store, one list, one delete path. -->
+          <!-- AI settings: API keys and permissions. Deliberately NOT
+               the core menu's settings - that one is display and voice;
+               this is what powers Great Sage and what it is allowed to
+               touch. -->
+          <div id="ai-settings-view" hidden>
+            <p class="panel-note">Keys are stored on this machine only, in
+               your user folder, and are never shown again once saved -
+               only replaced.</p>
+
+            <div class="ai-set-group">
+              <label>Chat provider</label>
+              <select id="ai-chat-provider"></select>
+              <span class="ai-set-hint">Local uses Ollama and needs no key.</span>
+            </div>
+
+            <div class="ai-set-group">
+              <label>Anthropic API key</label>
+              <input id="ai-key-anthropic" type="password" autocomplete="off"
+                     placeholder="not set">
+            </div>
+            <div class="ai-set-group">
+              <label>OpenAI API key</label>
+              <input id="ai-key-openai" type="password" autocomplete="off"
+                     placeholder="not set">
+            </div>
+
+            <div class="ai-set-group">
+              <label>Voice provider</label>
+              <select id="ai-tts-provider"></select>
+              <span class="ai-set-hint">F5 runs locally on your GPU.</span>
+            </div>
+            <div class="ai-set-group">
+              <label>Voice API key</label>
+              <input id="ai-key-tts" type="password" autocomplete="off"
+                     placeholder="not set">
+            </div>
+
+            <div class="ai-set-group">
+              <label>Permissions</label>
+              <div class="ai-set-toggles">
+                <label><input type="checkbox" id="ai-allow-desktop">
+                  Open apps, folders and files on this machine</label>
+                <label><input type="checkbox" id="ai-allow-web">
+                  Open web pages and search online</label>
+              </div>
+            </div>
+
+            <div class="ai-set-actions">
+              <span id="ai-set-status"></span>
+              <button id="ai-set-save" type="button">SAVE</button>
+            </div>
+          </div>
+
           <div id="memory-view" hidden>
             <p class="panel-note">What Great Sage has kept about you.
                Deleting a line removes it permanently.</p>
@@ -1710,6 +1837,12 @@ body.mini:hover #mini-exit { opacity: 1; }
                unchanged, so send, THINK, the status line and every voice
                path still bind to exactly the same elements. -->
           <div id="chat-bar">
+            <!-- Thumbnails live ABOVE the controls, so attaching
+                 something grows the bar upward instead of pushing the
+                 controls around. Empty and hidden when nothing is
+                 attached. -->
+            <div id="chat-attachments" hidden></div>
+            <div id="chat-input-row">
           <button id="chat-attach" type="button"
                   title="Attach an image (the model reads images)">+</button>
           <input type="text" id="chat-input" placeholder="Ask Great Sage..." autocomplete="off">
@@ -1717,7 +1850,8 @@ body.mini:hover #mini-exit { opacity: 1; }
           <button id="think-toggle" type="button" aria-pressed="false"
                   title="Let Great Sage deliberate before answering. Slower.">THINK</button>
           <span id="ws-status">connecting...</span>
-</div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -4947,8 +5081,10 @@ const MINI_CHAT_PAD = 3;
         renderTopicList();
         saveChats();
       }
+    } else if (msg.type === 'ai_settings') {
+      renderAiSettings(msg.settings);
     } else if (msg.type === 'model_info') {
-      setChatIdentity(msg.model, msg.provider, msg.available);
+      setChatIdentity(msg.model, msg.provider);
     } else if (msg.type === 'memory') {
       // The server is the single source of truth here: every change is
       // answered with the resulting list, so the panel never has to guess
@@ -5048,6 +5184,10 @@ const MINI_CHAT_PAD = 3;
     aiThinking = true;
     ws.send(JSON.stringify({ type: 'chat', text, think: thinkHarder,
                              images: pendingImages }));
+    // The transcript keeps the THUMBNAILS, not the full images.
+    if (pendingThumbs.length) {
+      topic.messages[topic.messages.length - 1].images = pendingThumbs.slice();
+    }
     clearAttachment();
     // Deliberation measured at 210-380s on this machine, so without a
     // visible state the window looks frozen for minutes. Spec S11 allows
@@ -5091,50 +5231,102 @@ const MINI_CHAT_PAD = 3;
   // capability rather than a placeholder - the same model that answers
   // also reads the picture, at no extra VRAM.
   //
-  // One turn only: the image is cleared after sending, because a base64
-  // image re-sent every turn would fill the context window in a few
-  // messages (see ChatEngine._build_outgoing).
-  let pendingImages = [];
+  // Two sizes are kept per image: the full one goes to the MODEL, and a
+  // small thumbnail goes into the transcript. Storing the full image in
+  // history would put a multi-hundred-KB base64 blob into chats.json for
+  // every picture ever sent.
+  let pendingImages = [];        // full size, for the model
+  let pendingThumbs = [];        // small, for the transcript
   const chatAttachBtn = document.getElementById('chat-attach');
+  const attachStrip = document.getElementById('chat-attachments');
   const chatFileInput = document.createElement('input');
   chatFileInput.type = 'file';
   chatFileInput.accept = 'image/*';
-  chatFileInput.multiple = false;
   chatFileInput.style.display = 'none';
   document.body.appendChild(chatFileInput);
 
-  function clearAttachment() {
-    pendingImages = [];
-    if (chatAttachBtn) {
-      chatAttachBtn.classList.remove('has-file');
-      chatAttachBtn.textContent = '+';
-      chatAttachBtn.title = 'Attach an image (the model reads images)';
-    }
-  }
-  if (chatAttachBtn) {
-    chatAttachBtn.addEventListener('click', () => {
-      if (pendingImages.length) { clearAttachment(); return; }  // click again to cancel
-      chatFileInput.click();
+  function renderAttachments() {
+    if (!attachStrip) return;
+    attachStrip.innerHTML = '';
+    attachStrip.hidden = !pendingThumbs.length;
+    pendingThumbs.forEach((thumb, idx) => {
+      const cell = document.createElement('div');
+      cell.className = 'chat-attachment';
+      const img = document.createElement('img');
+      img.src = thumb;
+      cell.appendChild(img);
+      const x = document.createElement('button');
+      x.type = 'button'; x.textContent = 'x'; x.title = 'Remove';
+      x.addEventListener('click', () => {
+        pendingImages.splice(idx, 1);
+        pendingThumbs.splice(idx, 1);
+        renderAttachments();
+      });
+      cell.appendChild(x);
+      attachStrip.appendChild(cell);
     });
   }
-  chatFileInput.addEventListener('change', () => {
+  function clearAttachment() {
+    pendingImages = []; pendingThumbs = [];
+    renderAttachments();
+  }
+
+  // Downscale for the transcript copy. Canvas rather than CSS, because
+  // the point is to store fewer bytes, not to display fewer pixels.
+  function makeThumb(dataUrl) {
+    return new Promise((resolve) => {
+      const im = new Image();
+      im.onload = () => {
+        const max = 240;
+        const scale = Math.min(1, max / Math.max(im.width, im.height));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(im.width * scale));
+        c.height = Math.max(1, Math.round(im.height * scale));
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        try { resolve(c.toDataURL('image/jpeg', 0.7)); }
+        catch (e) { resolve(dataUrl); }
+      };
+      im.onerror = () => resolve(dataUrl);
+      im.src = dataUrl;
+    });
+  }
+
+  async function addImageFile(file) {
+    if (!file || pendingImages.length >= 4) return;
+    const dataUrl = await new Promise((res) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result || ''));
+      r.onerror = () => res('');
+      r.readAsDataURL(file);
+    });
+    if (!dataUrl) return;
+    const comma = dataUrl.indexOf(',');
+    pendingImages.push(comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl);
+    pendingThumbs.push(await makeThumb(dataUrl));
+    renderAttachments();
+  }
+
+  if (chatAttachBtn) {
+    chatAttachBtn.addEventListener('click', () => chatFileInput.click());
+  }
+  chatFileInput.addEventListener('change', async () => {
     const f = chatFileInput.files && chatFileInput.files[0];
     chatFileInput.value = '';
-    if (!f) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      // Ollama wants raw base64, without the data: prefix.
-      const s = String(reader.result || '');
-      const comma = s.indexOf(',');
-      pendingImages = [comma >= 0 ? s.slice(comma + 1) : s];
-      if (chatAttachBtn) {
-        chatAttachBtn.classList.add('has-file');
-        chatAttachBtn.textContent = '1';
-        chatAttachBtn.title = f.name + ' attached - click to remove';
-      }
-    };
-    reader.readAsDataURL(f);
+    await addImageFile(f);
   });
+
+  // Paste from the clipboard, which is how a screenshot usually arrives.
+  if (chatInput) {
+    chatInput.addEventListener('paste', async (e) => {
+      const items = (e.clipboardData && e.clipboardData.items) || [];
+      for (const it of items) {
+        if (it.kind === 'file' && /^image\//.test(it.type)) {
+          e.preventDefault();
+          await addImageFile(it.getAsFile());
+        }
+      }
+    });
+  }
 
   chatSendBtn.addEventListener('click', sendChatMessage);
   chatInput.addEventListener('keydown', (e) => {
@@ -7702,56 +7894,106 @@ const MINI_CHAT_PAD = 3;
   const memoryNavBtn = document.getElementById('memory-nav-btn');
   let showingMemory = false;
 
-  function setChatWorkspaceView(memory) {
-    showingMemory = !!memory;
-    if (chatViewEl) chatViewEl.hidden = showingMemory;
-    if (memoryViewEl) memoryViewEl.hidden = !showingMemory;
-    // The input bar belongs to the conversation, not to the memory list -
-    // there is nothing to say to a list of facts.
-    const bar = document.getElementById('chat-bar');
-    if (bar) bar.hidden = showingMemory;
+  // Three panes share the main column now: the transcript, the memory
+  // list, and AI settings. Named rather than boolean, because "not
+  // memory" no longer means "the chat".
+  const aiSettingsViewEl = document.getElementById('ai-settings-view');
+  const aiSettingsBtn = document.getElementById('ai-settings-btn');
+  let workspaceView = 'chat';
+
+  function setChatWorkspaceView(view) {
+    workspaceView = (view === true) ? 'memory' : (view || 'chat');
+    showingMemory = workspaceView === 'memory';
+    if (chatViewEl) chatViewEl.hidden = workspaceView !== 'chat';
+    if (memoryViewEl) memoryViewEl.hidden = workspaceView !== 'memory';
+    if (aiSettingsViewEl) aiSettingsViewEl.hidden = workspaceView !== 'settings';
     if (memoryNavBtn) memoryNavBtn.classList.toggle('active', showingMemory);
+    if (aiSettingsBtn)
+      aiSettingsBtn.classList.toggle('active', workspaceView === 'settings');
+    // The input bar belongs to the conversation - there is nothing to say
+    // to a list of facts or to a settings form.
+    const bar = document.getElementById('chat-bar');
+    if (bar) bar.hidden = workspaceView !== 'chat';
     if (showingMemory) renderMemory();
   }
   if (memoryNavBtn) {
-    memoryNavBtn.addEventListener('click', () => setChatWorkspaceView(!showingMemory));
+    memoryNavBtn.addEventListener('click',
+      () => setChatWorkspaceView(showingMemory ? 'chat' : 'memory'));
+  }
+  if (aiSettingsBtn) {
+    aiSettingsBtn.addEventListener('click',
+      () => setChatWorkspaceView(workspaceView === 'settings' ? 'chat' : 'settings'));
+  }
+
+  // ---------- AI settings (API keys, providers, permissions) ----------
+  // The page never holds a real key it did not just receive from the
+  // user: the server sends MASKS, and a mask sent back is ignored rather
+  // than stored, so a saved key can be replaced but never read out.
+  const AI_KEY_FIELDS = { anthropic: 'ai-key-anthropic',
+                          openai: 'ai-key-openai',
+                          tts: 'ai-key-tts' };
+  function renderAiSettings(cfg) {
+    if (!cfg) return;
+    const fill = (id, list, value) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.innerHTML = '';
+      (list || []).forEach((name) => {
+        const o = document.createElement('option');
+        o.value = name; o.textContent = name;
+        el.appendChild(o);
+      });
+      if (value) el.value = value;
+    };
+    fill('ai-chat-provider', cfg.providers, cfg.chat_provider);
+    fill('ai-tts-provider', cfg.tts_providers, cfg.tts_provider);
+    Object.keys(AI_KEY_FIELDS).forEach((name) => {
+      const el = document.getElementById(AI_KEY_FIELDS[name]);
+      if (!el) return;
+      const masked = (cfg.keys || {})[name] || '';
+      el.value = masked;
+      el.placeholder = masked ? 'saved' : 'not set';
+    });
+    const web = document.getElementById('ai-allow-web');
+    const desk = document.getElementById('ai-allow-desktop');
+    if (web) web.checked = !!cfg.allow_web;
+    if (desk) desk.checked = !!cfg.allow_desktop;
+  }
+  const aiSaveBtn = document.getElementById('ai-set-save');
+  if (aiSaveBtn) {
+    aiSaveBtn.addEventListener('click', () => {
+      const keys = {};
+      Object.keys(AI_KEY_FIELDS).forEach((name) => {
+        const el = document.getElementById(AI_KEY_FIELDS[name]);
+        if (el && el.value) keys[name] = el.value;
+      });
+      const val = (id) => (document.getElementById(id) || {}).value;
+      const chk = (id) => !!(document.getElementById(id) || {}).checked;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'save_ai_settings', settings: {
+          chat_provider: val('ai-chat-provider'),
+          tts_provider: val('ai-tts-provider'),
+          allow_web: chk('ai-allow-web'),
+          allow_desktop: chk('ai-allow-desktop'),
+          keys,
+        }}));
+        const st = document.getElementById('ai-set-status');
+        if (st) st.textContent = 'saved';
+        setTimeout(() => { const e = document.getElementById('ai-set-status');
+                           if (e) e.textContent = ''; }, 2500);
+      }
+    });
   }
 
   // Identity header. The model name is filled in from the server so
   // switching models never edits this file - and Great Sage's name stays
   // the same whichever model is underneath.
-  function setChatIdentity(model, provider, available) {
-    const sel = document.getElementById('chat-model-select');
+  function setChatIdentity(model, provider) {
+    const m = document.getElementById('chat-model-name');
     const p = document.getElementById('chat-model-provider');
+    if (m) m.textContent = model || '-';
     if (p) p.textContent = provider || '';
-    if (!sel) return;
-    const list = (available && available.length) ? available
-                 : (model ? [model] : []);
-    // Rebuild only when the set changed, so opening the dropdown while a
-    // model_info arrives does not yank it shut.
-    const same = sel.options.length === list.length &&
-      [...sel.options].every((o, i) => o.value === list[i]);
-    if (!same) {
-      sel.innerHTML = '';
-      list.forEach((name) => {
-        const o = document.createElement('option');
-        o.value = name; o.textContent = name;
-        sel.appendChild(o);
-      });
-    }
-    if (model) sel.value = model;
   }
-  (() => {
-    const sel = document.getElementById('chat-model-select');
-    if (!sel) return;
-    sel.addEventListener('change', () => {
-      // Great Sage's identity is unchanged by this - only the brain
-      // underneath. History, memory, persona and tools all stay put.
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'set_model', model: sel.value }));
-      }
-    });
-  })();
 
   // ---------- Memory manager (spec S46) ----------
   let memoryFacts = [];
@@ -7987,6 +8229,15 @@ const MINI_CHAT_PAD = 3;
       const text = document.createElement('div');
       text.textContent = entry.text;
       div.appendChild(roleLabel);
+      // Pictures sent with this turn, shown in the transcript so the
+      // conversation still reads correctly later. These are the stored
+      // THUMBNAILS, not the full images that went to the model.
+      (entry.images || []).forEach((src) => {
+        const im = document.createElement('img');
+        im.src = src;
+        im.alt = 'attached image';
+        div.appendChild(im);
+      });
       div.appendChild(text);
       historyList.appendChild(div);
     });

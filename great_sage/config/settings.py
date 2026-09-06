@@ -528,6 +528,12 @@ HUD_SETTINGS_PATH = _user_file("hud_settings.json")
 # gitignored alongside memory.txt rather than tracked.
 CHAT_STORE_PATH = _user_file("chats.json")
 
+# API keys and provider choice, set from Chat Mode's AI settings.
+# SECRETS - lives in DATA_DIR (never inside the app bundle, which is
+# overwritten on update), is gitignored, and has its permissions
+# tightened to the current user. See core/ai_settings.py.
+AI_SETTINGS_PATH = _user_file("ai_settings.json")
+
 # The tool layer (spec S23-S26): let Great Sage read the clock, check
 # the machine, open links, launch installed applications and find files.
 #

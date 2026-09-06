@@ -161,7 +161,8 @@ import sounddevice as sd
 import websockets
 
 from great_sage.config import settings
-from great_sage.core import (chat_store, guardrails, hud_settings, memory,
+from great_sage.core import (ai_settings, chat_store, guardrails,
+                             hud_settings, memory,
                              tools as tool_layer,
                              personality,
                              voice_line_prefs)
@@ -813,6 +814,10 @@ async def run_server(engine, voice) -> None:
             # the model is technical detail. Sent from here so switching
             # models never means editing the page.
             await websocket.send(json.dumps({
+                "type": "ai_settings",
+                "settings": ai_settings.public_view(
+                    ai_settings.load(settings.AI_SETTINGS_PATH))}))
+            await websocket.send(json.dumps({
                 "type": "model_info",
                 "model": getattr(engine.provider, "model",
                                  settings.OLLAMA_DEFAULT_MODEL),
@@ -955,6 +960,26 @@ async def run_server(engine, voice) -> None:
                                     await websocket.send(json.dumps({"type": "error", "message": str(exc)}))
                                 except websockets.exceptions.ConnectionClosed:
                                     pass
+                elif msg_type == "save_ai_settings":
+                    # Keys arrive here and are written straight to the
+                    # secrets file. They are never logged, and only the
+                    # MASKED view is ever sent back - a saved key can be
+                    # replaced from the UI but not read out of it.
+                    try:
+                        current = ai_settings.load(settings.AI_SETTINGS_PATH)
+                        merged = ai_settings.apply_update(
+                            current, data.get("settings") or {})
+                        ai_settings.save(settings.AI_SETTINGS_PATH, merged)
+                        log.info("AI settings saved (provider=%s, tts=%s, "
+                                 "keys set: %s)",
+                                 merged.get("chat_provider"),
+                                 merged.get("tts_provider"),
+                                 sorted(merged.get("keys", {}).keys()))
+                        await websocket.send(json.dumps({
+                            "type": "ai_settings",
+                            "settings": ai_settings.public_view(merged)}))
+                    except Exception:
+                        log.exception("Could not save AI settings")
                 elif msg_type == "set_model":
                     # Great Sage's identity does not change with the model
                     # (spec S6) - only the brain underneath does, so this

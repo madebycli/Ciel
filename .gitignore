@@ -59,3 +59,6 @@ great_sage_hud.log
 hud_settings.json
 voice_line_prefs.json
 chats.json
+
+# API keys - never commit these.
+ai_settings.json
