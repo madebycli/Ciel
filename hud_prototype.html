@@ -1849,6 +1849,9 @@ body.mini:hover #mini-exit { opacity: 1; }
                   Open apps, folders and files on this machine</label>
                 <label><input type="checkbox" id="ai-allow-web">
                   Open web pages and search online</label>
+                <label><input type="checkbox" id="ai-auto-gaming">
+                  Switch to Gaming mode automatically when a game is
+                  fullscreen, and switch back after</label>
               </div>
             </div>
 
@@ -8060,8 +8063,10 @@ const MINI_CHAT_PAD = 3;
     });
     const web = document.getElementById('ai-allow-web');
     const desk = document.getElementById('ai-allow-desktop');
+    const auto = document.getElementById('ai-auto-gaming');
     if (web) web.checked = !!cfg.allow_web;
     if (desk) desk.checked = !!cfg.allow_desktop;
+    if (auto) auto.checked = cfg.auto_gaming !== false;
   }
   const aiSaveBtn = document.getElementById('ai-set-save');
   if (aiSaveBtn) {
@@ -8080,6 +8085,7 @@ const MINI_CHAT_PAD = 3;
           tts_provider: val('ai-tts-provider'),
           allow_web: chk('ai-allow-web'),
           allow_desktop: chk('ai-allow-desktop'),
+          auto_gaming: chk('ai-auto-gaming'),
           keys,
         }}));
         const st = document.getElementById('ai-set-status');

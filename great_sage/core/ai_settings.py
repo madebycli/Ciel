@@ -44,6 +44,9 @@ DEFAULTS: Dict[str, Any] = {
     # Spec S39. What Great Sage is allowed to SPEND right now, and where
     # data may go. See core/modes.py.
     "mode": "companion",
+    # Switch to GAMING by itself when a fullscreen game is detected, and
+    # switch back afterwards (spec S38/S40, Phase 10).
+    "auto_gaming": True,
 }
 
 
@@ -136,7 +139,7 @@ def apply_update(data: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]
     for field in ("chat_provider", "chat_model", "tts_provider", "mode"):
         if field in update and isinstance(update[field], str):
             data[field] = update[field]
-    for field in ("allow_web", "allow_desktop"):
+    for field in ("allow_web", "allow_desktop", "auto_gaming"):
         if field in update:
             data[field] = bool(update[field])
     incoming = update.get("keys")

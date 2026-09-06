@@ -861,6 +861,54 @@ async def run_server(engine, voice) -> None:
                 _hotkey_listening["on"] = False
                 log.exception("Could not start recording from the hotkey")
 
+    # ---- Automatic GAMING mode (Phase 10) ----
+    # The mode in force before a game started, so it can be put back. None
+    # means no game is running as far as this is concerned.
+    _auto = {"restore_to": None}
+
+    def _on_game_change(title):
+        cfg = ai_settings.load(settings.AI_SETTINGS_PATH)
+        if not cfg.get("auto_gaming", True):
+            return
+        if title:
+            if _auto["restore_to"] is not None:
+                return                      # already switched for this game
+            was = cfg.get("mode", "companion")
+            if was in ("gaming", "sleep"):
+                return                      # already frugal; leave it alone
+            _auto["restore_to"] = was
+            cfg = ai_settings.apply_update(cfg, {"mode": "gaming"})
+            ai_settings.save(settings.AI_SETTINGS_PATH, cfg)
+            _apply_provider(engine, cfg)
+            _apply_mode(engine, cfg)
+            log.info("Game detected (%r) - switched to GAMING, will restore "
+                     "%s afterwards", title[:60], was.upper())
+        else:
+            back = _auto["restore_to"]
+            _auto["restore_to"] = None
+            if back is None:
+                return
+            # If Krazaa changed mode by hand while the game was running,
+            # that decision wins - do not undo it behind his back.
+            if cfg.get("mode") != "gaming":
+                log.info("Game ended, but the mode was changed by hand to "
+                         "%s - leaving it", str(cfg.get("mode")).upper())
+                return
+            cfg = ai_settings.apply_update(cfg, {"mode": back})
+            ai_settings.save(settings.AI_SETTINGS_PATH, cfg)
+            _apply_provider(engine, cfg)
+            _apply_mode(engine, cfg)
+            log.info("Game closed - restored %s mode", back.upper())
+
+    _watcher = None
+    try:
+        from great_sage.core.game_watch import GameWatcher
+        _watcher = GameWatcher(_on_game_change)
+        _watcher.start()
+        log.info("Watching for fullscreen games (auto GAMING mode)")
+    except Exception:
+        log.exception("Game watcher unavailable")
+
     _hotkey = None
     if getattr(settings, "GLOBAL_HOTKEY", ""):
         try:
