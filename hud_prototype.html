@@ -6023,9 +6023,15 @@ const MINI_CHAT_PAD = 3;
   const BUSY_FPS_CAP = 20;
 
   // The main window keeps rendering at full rate while it sits behind a
-  // game or a browser, where nobody is looking at it. Unfocused it drops
-  // to 12fps - still alive, so alt-tabbing back does not land on a stale
-  // frame, but a quarter of the fill.
+  // game or a browser. Unfocused it steps down instead.
+  //
+  // 30, NOT something much lower. This is a two-monitor machine, and an
+  // unfocused window is not necessarily an unwatched one - the HUD can
+  // easily be sitting fully visible on the second screen while a game
+  // has focus on the first. A deep throttle would make it visibly choppy
+  // there, which is the exact complaint this whole change set is fixing.
+  // 30 is the cap the overlay already runs at and reads as smooth, and
+  // it still cuts most of the idle fill.
   //
   // Deliberately NOT applied to either overlay. The mini HUD and the
   // standalone overlay window are meant to be watched WHILE something
@@ -6033,9 +6039,9 @@ const MINI_CHAT_PAD = 3;
   // miniMode branch is tested first below.
   //
   // Polled rather than driven by focus/blur listeners: a single missed
-  // 'focus' event would strand the HUD at 12fps with no way back, and
-  // document.hasFocus() is a trivial call to make once a frame.
-  const UNFOCUSED_FPS_CAP = 12;
+  // 'focus' event would strand the HUD at the lower rate with no way
+  // back, and document.hasFocus() is a trivial call to make once a frame.
+  const UNFOCUSED_FPS_CAP = 30;
   function windowHasFocus() {
     try { return document.hasFocus(); } catch (err) { return true; }
   }
