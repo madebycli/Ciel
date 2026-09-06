@@ -143,3 +143,34 @@ def apply_update(data: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]
     for name in (update.get("clear_keys") or []):
         data.get("keys", {}).pop(name, None)
     return data
+
+
+def build_provider(data, fallback):
+    """The provider these settings ask for, or `fallback` if unavailable.
+
+    Never raises and never leaves Great Sage without a brain: a missing
+    key, an unknown provider name or a failed import all fall back to
+    the local model rather than breaking the app. The reason is logged,
+    because silently ignoring a selected provider would look like the
+    setting did nothing.
+    """
+    want = (data or {}).get("chat_provider") or "local"
+    if want == "local":
+        return fallback, "Ollama / Local"
+    key = ((data or {}).get("keys") or {}).get(want, "").strip()
+    if not key:
+        log.warning("Provider %r selected but no API key is set; "
+                    "staying on the local model", want)
+        return fallback, "Ollama / Local"
+    try:
+        if want == "anthropic":
+            from great_sage.models.anthropic_provider import AnthropicProvider
+            model = (data or {}).get("chat_model") or ""
+            return (AnthropicProvider(api_key=key, model=model),
+                    "Anthropic / Online")
+    except Exception:
+        # Deliberately no exception text: it can echo request details.
+        log.exception("Could not start the %r provider; staying local", want)
+        return fallback, "Ollama / Local"
+    log.warning("Provider %r is not implemented yet; staying local", want)
+    return fallback, "Ollama / Local"

@@ -358,6 +358,22 @@ def _summarise_chat(provider, title, messages):
     return provider.send_message([{"role": "user", "content": prompt}]).strip()
 
 
+def _apply_provider(engine, cfg):
+    """Point the engine at whichever provider the settings ask for.
+
+    The LOCAL provider is remembered the first time, so switching away to
+    an API and back again does not need it rebuilt - and so a bad key can
+    always fall back to something that works.
+    """
+    if not hasattr(engine, "_local_provider"):
+        engine._local_provider = engine.provider
+    provider, label = ai_settings.build_provider(cfg, engine._local_provider)
+    if provider is not engine.provider:
+        log.info("Chat provider is now %s", label)
+    engine.provider = provider
+    engine.provider_label = label
+
+
 def _installed_models():
     """Model names Ollama actually has, for the chat-mode selector.
 
@@ -565,7 +581,10 @@ def _handle_chat(text, engine, voice, sink, websocket, loop,
             speaker.start()
         reply_chunks = []
         used_tools = []
+        _tools_ok = getattr(type(engine.provider), "supports_tools", None)
+        _tools_ok = True if _tools_ok is None else bool(_tools_ok())
         if (getattr(settings, "TOOLS_ENABLED", True)
+                and _tools_ok
                 and tool_layer.might_need_tools(text)):
             # Tool-capable turns are NOT streamed. Ollama reports
             # tool_calls only on a complete message, so the call has to
@@ -813,6 +832,8 @@ async def run_server(engine, voice) -> None:
             # Identity header (spec correction S5): Great Sage is the name,
             # the model is technical detail. Sent from here so switching
             # models never means editing the page.
+            _apply_provider(engine,
+                            ai_settings.load(settings.AI_SETTINGS_PATH))
             await websocket.send(json.dumps({
                 "type": "ai_settings",
                 "settings": ai_settings.public_view(
@@ -821,8 +842,8 @@ async def run_server(engine, voice) -> None:
                 "type": "model_info",
                 "model": getattr(engine.provider, "model",
                                  settings.OLLAMA_DEFAULT_MODEL),
-                "provider": "Ollama / Local",
-                "available": _installed_models()}))
+                "provider": getattr(engine, "provider_label",
+                                    "Ollama / Local")}))
             await websocket.send(json.dumps({
                 "type": "memory",
                 "facts": memory.load_memory(settings.MEMORY_FILE_PATH)}))
@@ -970,6 +991,7 @@ async def run_server(engine, voice) -> None:
                         merged = ai_settings.apply_update(
                             current, data.get("settings") or {})
                         ai_settings.save(settings.AI_SETTINGS_PATH, merged)
+                        _apply_provider(engine, merged)
                         log.info("AI settings saved (provider=%s, tts=%s, "
                                  "keys set: %s)",
                                  merged.get("chat_provider"),
@@ -978,6 +1000,11 @@ async def run_server(engine, voice) -> None:
                         await websocket.send(json.dumps({
                             "type": "ai_settings",
                             "settings": ai_settings.public_view(merged)}))
+                        await websocket.send(json.dumps({
+                            "type": "model_info",
+                            "model": getattr(engine.provider, "model", "?"),
+                            "provider": getattr(engine, "provider_label",
+                                                "Ollama / Local")}))
                     except Exception:
                         log.exception("Could not save AI settings")
                 elif msg_type == "set_model":
