@@ -594,7 +594,8 @@ def _handle_chat(text, engine, voice, sink, websocket, loop,
             # No real loss: VOICE_SINGLE_SHOT means speech waits for the
             # whole reply anyway, and captions follow the audio.
             reply, used_tools = engine.send_with_tools(
-                text, tool_layer.ollama_schema(), tool_layer.execute)
+                text, tool_layer.ollama_schema(), tool_layer.execute,
+                collect_images=tool_layer.take_pending_images)
             for name, result in used_tools:
                 log.info("Tool %s -> %s", name, str(result)[:120])
                 send({"type": "tool_used", "name": name,

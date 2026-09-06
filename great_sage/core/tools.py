@@ -360,3 +360,112 @@ def might_need_tools(text: str) -> bool:
     """
     low = (text or "").lower()
     return any(t in low for t in _TRIGGERS)
+
+
+# ---------------------------------------------------------------------
+# Vision: letting Great Sage actually LOOK at the screen.
+#
+# A tool returns text, but a screenshot has to reach the model as an
+# IMAGE. So the capture goes into a one-shot buffer here, the tool's text
+# result only says what was captured, and the caller drains the buffer and
+# attaches the picture to the follow-up call. That keeps the tool
+# interface unchanged - every other tool is still just name -> string.
+#
+# One shot on purpose: a screenshot left pending would be re-sent with a
+# later, unrelated question, and the model would answer about a screen the
+# user was no longer looking at.
+# ---------------------------------------------------------------------
+
+_PENDING_IMAGES: List[str] = []
+
+
+def take_pending_images() -> List[str]:
+    """Images captured by the last tool call, removed as they are read."""
+    global _PENDING_IMAGES
+    out, _PENDING_IMAGES = _PENDING_IMAGES, []
+    return out
+
+
+def _focused_window() -> str:
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        h = u.GetForegroundWindow()
+        if not h:
+            return "nothing"
+        buf = ctypes.create_unicode_buffer(512)
+        u.GetWindowTextW(h, buf, 512)
+        return buf.value.strip() or "an untitled window"
+    except Exception:
+        return "unknown"
+
+
+def _capture(region: str = "") -> str:
+    """Screenshot the desktop (or just the focused window) for the model.
+
+    Downscaled before it goes anywhere: a vision model resizes internally
+    anyway, so full resolution only costs VRAM and time. 1280px on the
+    long edge keeps on-screen text readable, which is the whole point of
+    being asked what something says.
+    """
+    try:
+        from PIL import ImageGrab
+    except Exception:
+        raise ToolError("Screen capture is unavailable: Pillow is missing.")
+    box = None
+    if (region or "").strip().lower() in ("window", "focused", "active"):
+        try:
+            import ctypes
+            import ctypes.wintypes as wt
+
+            class R(ctypes.Structure):
+                _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long),
+                            ("r", ctypes.c_long), ("b", ctypes.c_long)]
+            h = ctypes.windll.user32.GetForegroundWindow()
+            r = R()
+            ctypes.windll.user32.GetWindowRect(h, ctypes.byref(r))
+            if r.r > r.l and r.b > r.t:
+                box = (r.l, r.t, r.r, r.b)
+        except Exception:
+            box = None          # fall back to the whole desktop
+    try:
+        img = ImageGrab.grab(bbox=box)
+    except Exception as exc:
+        raise ToolError("Could not capture the screen: %s" % exc)
+    img = img.convert("RGB")
+    img.thumbnail((1280, 1280))
+    import base64
+    import io as _io
+    buf = _io.BytesIO()
+    img.save(buf, format="JPEG", quality=82)
+    _PENDING_IMAGES.append(base64.b64encode(buf.getvalue()).decode())
+    what = "the focused window" if box else "the whole screen"
+    return ("Captured %s (%dx%d), showing %r. The image is attached to this "
+            "turn - describe what is actually visible in it."
+            % (what, img.size[0], img.size[1], _focused_window()))
+
+
+REGISTRY.append(Tool(
+    "look_at_screen",
+    "Take a screenshot so you can SEE the user's screen, then answer from "
+    "what is visible. Use whenever the user asks what something on screen "
+    "says or means, to read an error, or to understand what they are "
+    "looking at. Pass region='window' for just the focused window.",
+    {"type": "object",
+     "properties": {"region": {"type": "string",
+                               "description": "'window' or 'screen'"}}},
+    _capture, SAFE))
+
+REGISTRY.append(Tool(
+    "get_focused_window",
+    "Name the application the user is currently working in. Use for "
+    "context before drafting text, so a reply suits where it will go.",
+    {"type": "object", "properties": {}},
+    _focused_window, SAFE))
+
+BY_NAME = {t.name: t for t in REGISTRY}
+_TRIGGERS = _TRIGGERS + (
+    "screen", "look at", "see this", "what does this", "read this",
+    "on my screen", "screenshot", "this error", "focused", "what am i",
+    "what is this", "whats this", "translate",
+)

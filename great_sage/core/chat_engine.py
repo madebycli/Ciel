@@ -160,7 +160,7 @@ class ChatEngine:
         self._boundary_start_index = 1
 
     def send_with_tools(self, user_input, tools_schema, run_tool,
-                        max_rounds=3):
+                        max_rounds=3, collect_images=None):
         """Send a message the model may answer by CALLING something.
 
         Returns (reply_text, [(tool_name, result_or_error), ...]).
@@ -198,6 +198,17 @@ class ChatEngine:
                     used.append((name, result))
                     outgoing.append({"role": "tool", "content": str(result),
                                      "tool_name": name})
+                    # A tool may have produced an IMAGE - look_at_screen
+                    # does. The tool interface stays text-only; the picture
+                    # is collected here and attached to the follow-up call,
+                    # because a description of a screenshot is not the same
+                    # thing as seeing it.
+                    if collect_images is not None:
+                        shot = collect_images()
+                        if shot:
+                            outgoing.append({"role": "user",
+                                             "content": "(the screen)",
+                                             "images": list(shot)})
             # Out of rounds: answer with what the tools returned rather
             # than looping forever.
             reply = message.get("content") or ""
