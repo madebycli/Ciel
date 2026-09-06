@@ -5247,6 +5247,17 @@ const MINI_CHAT_PAD = 3;
     ws.addEventListener('close', () => {
       wsStatusEl.textContent = 'AI: disconnected - retrying...';
       wsStatusEl.className = 'disconnected';
+      // Every state that ends a reply is cleared by a message from the
+      // server, so a socket that dies mid-reply leaves them latched on
+      // with nothing left to turn them off. aiThinking is the one that
+      // matters: it now drives the frame cap and the foreground quality,
+      // so a stuck flag pins the whole scene at 20fps and 1x until the
+      // page is reloaded - which reads exactly like "the visuals are
+      // lagging". No reply is coming over a closed socket, so drop them.
+      aiThinking = false;
+      speechInProgress = false;
+      spokenSoFar = '';
+      if (window.__endThinkingBusy) window.__endThinkingBusy();
       setTimeout(connectWebSocket, 2000);
     });
     ws.addEventListener('message', handleServerMessage);
