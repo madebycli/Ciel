@@ -2309,15 +2309,27 @@ Hey Ciel</textarea>
   // render target like this one, so without supersampling there'd be no
   // anti-aliasing on the model at all.
   const BG_PIXEL_DIVISOR = 3;
-  const FG_SUPERSAMPLE = 2;
+  // 1.5 rather than 2. At 2560x1440 that is 8.3Mpx per frame instead of
+  // 9.4 (the 2x target clamps at 4096 wide anyway), and the downsample
+  // still does the anti-aliasing the lines need - 1.5x is above the
+  // threshold where aliasing becomes visible on thin strokes. Idle GPU
+  // measured 41% with the scene doing nothing; this is the fill cost,
+  // not the geometry.
+  const FG_SUPERSAMPLE = 1.5;
   // Device pixel ratio matters here: the targets were sized in CSS
   // pixels while the canvas itself is sized in device pixels, so on any
   // HiDPI screen the foreground was effectively rendering at an even
   // lower relative resolution than intended.
+  // While Great Sage is thinking the foreground renders at 1x instead of
+  // supersampled. At 2560x1440 the supersampled target is 4096x2304 -
+  // 9.4 megapixels, about 2.5x the screen - EVERY frame, competing with
+  // the model for the same card. 1x cuts it to 3.7Mpx. Lines look
+  // slightly softer for a few seconds; the scene stays smooth.
+  let fgQuality = FG_SUPERSAMPLE;
   function fgTargetSize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    let w = window.innerWidth * dpr * FG_SUPERSAMPLE;
-    let h = window.innerHeight * dpr * FG_SUPERSAMPLE;
+    let w = window.innerWidth * dpr * fgQuality;
+    let h = window.innerHeight * dpr * fgQuality;
     // Keep it sane on large/HiDPI displays - past this the extra
     // sharpness isn't visible but the fill cost very much is.
     const over = Math.max(w / 4096, h / 4096, 1);
@@ -5983,8 +5995,32 @@ const MINI_CHAT_PAD = 3;
   let _lastFrameMs = performance.now();
   // 60 is plenty for this scene; the extra frames on a high-refresh
   // monitor cost the GPU that the model needs and change nothing visible.
-  const IDLE_FPS_CAP = 60;
-  const BUSY_FPS_CAP = 24;
+  // 48 rather than 60. The scene is slow-moving - rings, breathing, a
+  // drifting wireframe - and nothing in it reads differently above the
+  // high forties, while every frame is 8 megapixels of fill on a card
+  // shared with the model and the voice.
+  const IDLE_FPS_CAP = 48;
+  // 20 rather than 24: the scene is decorative while Great Sage works,
+  // and every frame not drawn is GPU handed back to the answer.
+  const BUSY_FPS_CAP = 20;
+
+  // The main window keeps rendering at full rate while it sits behind a
+  // game or a browser, where nobody is looking at it. Unfocused it drops
+  // to 12fps - still alive, so alt-tabbing back does not land on a stale
+  // frame, but a quarter of the fill.
+  //
+  // Deliberately NOT applied to either overlay. The mini HUD and the
+  // standalone overlay window are meant to be watched WHILE something
+  // else has focus - that is the entire point of them - which is why the
+  // miniMode branch is tested first below.
+  //
+  // Polled rather than driven by focus/blur listeners: a single missed
+  // 'focus' event would strand the HUD at 12fps with no way back, and
+  // document.hasFocus() is a trivial call to make once a frame.
+  const UNFOCUSED_FPS_CAP = 12;
+  function windowHasFocus() {
+    try { return document.hasFocus(); } catch (err) { return true; }
+  }
 
   function animate() {
     requestAnimationFrame(animate);
@@ -6002,11 +6038,28 @@ const MINI_CHAT_PAD = 3;
     // 3060. During generation the GPU hit 94% average and 99% peak, and
     // the HUD visibly froze. While Great Sage is thinking the scene steps
     // down further and gives the GPU back to the work being waited on.
-    const _cap = miniMode
-      ? (miniCfg.fpsCap || 30)
-      : (window.__modeFpsCap
-           ? window.__modeFpsCap                      // GAMING / SLEEP
-           : (aiThinking ? BUSY_FPS_CAP : IDLE_FPS_CAP));
+    // Quality follows the same signal as the frame cap. Resizing a
+    // render target is a real allocation, so it happens ONLY on the
+    // transition, never per frame.
+    const _wantQuality = (miniMode || !aiThinking) ? FG_SUPERSAMPLE : 1;
+    if (_wantQuality !== fgQuality) {
+      fgQuality = _wantQuality;
+      try {
+        fgTarget.setSize(...fgTargetSize());
+        fgComposite.material.uniforms.uTexel.value.set(
+          1 / fgTarget.width, 1 / fgTarget.height);
+      } catch (err) { /* keep rendering at whatever size it has */ }
+    }
+    let _cap;
+    if (miniMode) {
+      _cap = miniCfg.fpsCap || 30;
+    } else if (window.__modeFpsCap) {
+      _cap = window.__modeFpsCap;                     // GAMING / SLEEP
+    } else if (!IS_STANDALONE_OVERLAY && !windowHasFocus()) {
+      _cap = UNFOCUSED_FPS_CAP;                       // behind a game/browser
+    } else {
+      _cap = aiThinking ? BUSY_FPS_CAP : IDLE_FPS_CAP;
+    }
     if (_cap && (_now - _lastFrameMs) < (1000 / _cap) - 1) {
       return;
     }

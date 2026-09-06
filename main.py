@@ -303,6 +303,36 @@ def build_voice(provider: ModelProvider):
             print("Continuing in text-only mode.\n")
             return None
 
+    if settings.VOICE_ENGINE == "f5":
+        from great_sage.voice.f5_tts_engine import F5TTSVoiceOutput
+
+        try:
+            return F5TTSVoiceOutput(
+                reference_audio_path=settings.F5_REFERENCE_AUDIO_PATH,
+                voice_lines=build_voice_lines(),
+                disabled_voice_line_patterns=build_disabled_voice_line_patterns(),
+                nfe_step=settings.F5_NFE_STEP,
+                single_shot=settings.VOICE_SINGLE_SHOT,
+            )
+        except VoiceError as exc:
+            # Same fallback the HUD uses: F5 wants a GPU and a multi-GB
+            # model, and losing the voice entirely is worse than dropping
+            # to the CPU engine.
+            print(f"[Voice] F5-TTS unavailable ({exc}) - falling back to Pocket TTS.")
+            from great_sage.voice.pocket_tts_engine import PocketTTSVoiceOutput
+
+            try:
+                return PocketTTSVoiceOutput(
+                    reference_audio_path=settings.CLONE_REFERENCE_AUDIO_PATH,
+                    voice_lines=build_voice_lines(),
+                    disabled_voice_line_patterns=build_disabled_voice_line_patterns(),
+                )
+            except VoiceError as exc2:
+                print(f"[Voice unavailable] {exc2}")
+                print("Continuing in text-only mode.")
+                print()
+                return None
+
     print(f"[Voice unavailable] Unknown VOICE_ENGINE: {settings.VOICE_ENGINE!r}")
     return None
 
