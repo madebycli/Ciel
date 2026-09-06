@@ -30,9 +30,17 @@ log = logging.getLogger(__name__)
 MAX_CHATS = 200
 MAX_MESSAGES_PER_CHAT = 500
 MAX_IMAGES_PER_MESSAGE = 4
-# ~400KB of base64, comfortably above a 240px JPEG thumbnail
-# and well below anything that would bloat the file.
-MAX_IMAGE_CHARS = 400_000
+# A 240px JPEG thumbnail at quality 0.7 is roughly 10-20KB of base64, so
+# 64KB is generous headroom for one. The first value here was 400KB,
+# which multiplied out to a 160GB worst case across the allowed chats and
+# messages - a limit that large is not a limit.
+MAX_IMAGE_CHARS = 64_000
+# A per-chat budget, applied NEWEST FIRST. Bounding by count alone still
+# grows without limit as chats accumulate; a byte budget does not, and
+# dropping the oldest pictures first is what a person would expect - the
+# screenshot from four hundred messages ago is not what they scroll back
+# for.
+MAX_IMAGE_BYTES_PER_CHAT = 1_500_000
 
 
 def _sanitise(chats: Any) -> List[Dict[str, Any]]:
@@ -67,6 +75,22 @@ def _sanitise(chats: Any) -> List[Dict[str, Any]]:
                 if kept:
                     entry["images"] = kept
             clean_msgs.append(entry)
+
+        # Spend the image budget newest-first, then strip the rest.
+        budget = MAX_IMAGE_BYTES_PER_CHAT
+        for entry in reversed(clean_msgs):
+            imgs = entry.get("images")
+            if not imgs:
+                continue
+            keep = []
+            for img in imgs:
+                if len(img) <= budget:
+                    keep.append(img)
+                    budget -= len(img)
+            if keep:
+                entry["images"] = keep
+            else:
+                entry.pop("images", None)
         out.append({
             "id": c["id"],
             "title": str(c.get("title") or "New chat")[:120],

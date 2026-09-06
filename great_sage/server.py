@@ -577,7 +577,9 @@ def _handle_chat(text, engine, voice, sink, websocket, loop,
 
     try:
         if streaming_speech:
-            speaker = threading.Thread(target=speak_worker, daemon=True)
+            speaker = threading.Thread(
+                target=_log_exceptions(speak_worker, "speech playback"),
+                daemon=True)
             speaker.start()
         reply_chunks = []
         used_tools = []
@@ -704,8 +706,14 @@ def _start_chat_thread(text, engine, voice, sink, websocket, loop,
     (push-to-talk, wake-word) below - same background-thread dispatch
     either way, so a voice-originated message goes through the exact same
     reply/speech pipeline a typed one does."""
+    # Wrapped, for the same reason push-to-talk is: an unhandled
+    # exception in a bare thread goes to stderr, and a windowed
+    # PyInstaller build HAS no stderr - so a reply that died on its way
+    # out would leave no trace anywhere, exactly as the STT failure did.
+    # _handle_chat guards its own body, but anything raised before that
+    # try block would still escape.
     threading.Thread(
-        target=_handle_chat,
+        target=_log_exceptions(_handle_chat, "chat reply"),
         args=(text, engine, voice, sink, websocket, loop),
         kwargs={"think": think},
         daemon=True,
@@ -1202,6 +1210,12 @@ async def run_server(engine, voice) -> None:
             # rather than leaving a background thread hung forever.
             sink.notify_audio_ended()
 
-    async with websockets.serve(handler, HOST, PORT):
+    # max_size: the websockets default is 1MB per frame, and an attached
+    # image is one frame. A single desktop screenshot is ~0.3MB, so ONE
+    # is fine and FOUR is not - the connection would close with a 1009
+    # and the message would simply vanish, with the page reconnecting as
+    # if nothing had been sent. Raised well clear of that; the real bound
+    # on image size is applied in the page before sending.
+    async with websockets.serve(handler, HOST, PORT, max_size=16 * 1024 * 1024):
         log.info("WebSocket bridge listening on ws://%s:%s", HOST, PORT)
         await asyncio.Future()  # run until the process exits

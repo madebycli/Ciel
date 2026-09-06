@@ -5291,18 +5291,43 @@ const MINI_CHAT_PAD = 3;
     });
   }
 
+  // Downscale before sending. A vision model gains nothing from a 4K
+  // image - it is resized internally anyway - while the raw bytes cost
+  // WebSocket frame size, VRAM and time. 1536px on the long edge keeps
+  // text in a screenshot legible, which is the demanding case.
+  function downscaleForModel(dataUrl) {
+    return new Promise((resolve) => {
+      const im = new Image();
+      im.onload = () => {
+        const max = 1536;
+        const scale = Math.min(1, max / Math.max(im.width, im.height));
+        if (scale >= 1) { resolve(dataUrl); return; }
+        const c = document.createElement('canvas');
+        c.width = Math.round(im.width * scale);
+        c.height = Math.round(im.height * scale);
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        try { resolve(c.toDataURL('image/jpeg', 0.85)); }
+        catch (e) { resolve(dataUrl); }
+      };
+      im.onerror = () => resolve(dataUrl);
+      im.src = dataUrl;
+    });
+  }
+
   async function addImageFile(file) {
     if (!file || pendingImages.length >= 4) return;
-    const dataUrl = await new Promise((res) => {
+    let dataUrl = await new Promise((res) => {
       const r = new FileReader();
       r.onload = () => res(String(r.result || ''));
       r.onerror = () => res('');
       r.readAsDataURL(file);
     });
     if (!dataUrl) return;
+    const thumbSource = dataUrl;
+    dataUrl = await downscaleForModel(dataUrl);
     const comma = dataUrl.indexOf(',');
     pendingImages.push(comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl);
-    pendingThumbs.push(await makeThumb(dataUrl));
+    pendingThumbs.push(await makeThumb(thumbSource));
     renderAttachments();
   }
 
