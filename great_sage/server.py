@@ -357,6 +357,42 @@ def _summarise_chat(provider, title, messages):
     return provider.send_message([{"role": "user", "content": prompt}]).strip()
 
 
+def _suggest_title(provider, messages):
+    """A short topic name for the sidebar, from the opening exchange.
+
+    The sidebar used the first 40 characters of the first message, so
+    every chat was named things like "could you check why the render" -
+    unreadable at a glance and useless for finding a conversation later.
+
+    Generated ONCE, from the first exchange, and then left alone. A title
+    that keeps rewriting itself as the topic drifts makes the list move
+    under the user, which is worse than a slightly stale name.
+    """
+    body = _transcript(messages, limit=6)
+    if not body:
+        return None
+    NL = chr(10)
+    prompt = (
+        "Name this conversation for a sidebar." + NL +
+        "Two to four words. Title Case. No quotes, no punctuation, no "
+        "explanation - reply with the title and nothing else." + NL +
+        "Examples: Clevatess Sound Design, TTS Troubleshooting, "
+        "AI Model Research." + NL + NL + body)
+    try:
+        out = provider.send_message([{"role": "user", "content": prompt}])
+    except Exception:
+        log.exception("Title generation failed")
+        return None
+    title = (out or "").strip().strip(chr(34) + chr(39) + ".")
+    title = title.splitlines()[0].strip() if title else ""
+    # A model that explains itself instead of naming the chat is worse
+    # than the fallback, so anything sentence-length is discarded.
+    if not title or len(title) > 48 or len(title.split()) > 6:
+        log.info("Title discarded as unusable: %r", title[:60])
+        return None
+    return title
+
+
 def _chat_takeaway(provider, title, messages):
     """Spec S18/S20: the durable idea worth keeping, compressed."""
     body = _transcript(messages)
@@ -900,6 +936,17 @@ async def run_server(engine, voice) -> None:
                                     await websocket.send(json.dumps({"type": "error", "message": str(exc)}))
                                 except websockets.exceptions.ConnectionClosed:
                                     pass
+                elif msg_type == "suggest_title":
+                    def _title(payload=data):
+                        t = _suggest_title(engine.provider,
+                                           payload.get("messages"))
+                        if not t:
+                            return
+                        asyncio.run_coroutine_threadsafe(
+                            websocket.send(json.dumps(
+                                {"type": "chat_title", "id": payload.get("id"),
+                                 "title": t})), loop)
+                    threading.Thread(target=_title, daemon=True).start()
                 elif msg_type in ("summarize_chat", "remember_chat"):
                     # Both need the model, so they run off the event loop
                     # for the same reason _handle_chat does.
@@ -970,6 +1017,14 @@ async def run_server(engine, voice) -> None:
                     active_connection["sink"] = sink
                     if voice is not None:
                         voice.set_sink(sink)
+                    # Attached images ride with this turn only. The
+                    # vision model is the same qwen3.5:4b already loaded,
+                    # so this costs no extra VRAM - verified by handing
+                    # it a screenshot, which it read correctly.
+                    imgs = data.get("images")
+                    if imgs and hasattr(engine, "attach_images"):
+                        engine.attach_images(imgs)
+                        log.info("Chat turn carries %d image(s)", len(imgs))
                     _start_chat_thread(data.get("text", ""), engine,
                                        voice, sink, websocket, loop,
                                        think=bool(data.get("think")))

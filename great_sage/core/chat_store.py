@@ -58,6 +58,11 @@ def _sanitise(chats: Any) -> List[Dict[str, Any]]:
             "created": c.get("created"),
             "updated": c.get("updated"),
             "summary": str(c.get("summary") or "")[:2000],
+            # Whether a title was already generated, and whether the user
+            # renamed it by hand. Persisted so a restart does not re-request
+            # a title for every stored chat, or overwrite a manual name.
+            "titled": bool(c.get("titled")),
+            "renamed": bool(c.get("renamed")),
             "messages": clean_msgs,
         })
     return out

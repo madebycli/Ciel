@@ -34,6 +34,9 @@ class ChatEngine:
         """
         self.provider = provider
         self.history: List[Message] = [{"role": "system", "content": system_prompt}]
+
+        # Images for the NEXT turn only; see _build_outgoing.
+        self._pending_images: List[str] = []
         self._idle_reset_seconds = idle_reset_seconds
         self._last_activity: Optional[float] = None
         self._on_session_boundary = on_session_boundary
@@ -96,6 +99,15 @@ class ChatEngine:
             if block:
                 outgoing.insert(len(outgoing) - 1,
                                 {"role": "system", "content": block})
+
+        # Attached images ride on the user's own turn, which is the
+        # shape Ollama expects. They are deliberately NOT written to
+        # self.history: a base64 image re-sent on every subsequent
+        # turn would fill the context window within a few messages.
+        if self._pending_images:
+            outgoing[-1] = dict(outgoing[-1],
+                                images=list(self._pending_images))
+            self._pending_images = []
         return outgoing
 
     def send(self, user_input: str) -> str:
@@ -194,3 +206,7 @@ class ChatEngine:
         except ModelProviderError:
             self.history.pop()      # no unanswered user turn left behind
             raise
+
+    def attach_images(self, images):
+        """Base64 images to send with the next message, then discard."""
+        self._pending_images = [i for i in (images or []) if i][:4]

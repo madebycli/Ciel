@@ -175,15 +175,66 @@
     letter-spacing: 2px; opacity: 0.5;
   }
 
-  #chat-bar {
-    position: fixed; bottom: 9%; left: 50%; transform: translateX(-50%);
-    display: flex; gap: 6px; align-items: center;
-    width: min(70%, 640px);
-    /* Above the settings/history overlay (z-index 7) so you can still
-       type to Great Sage with the panel open, instead of it being buried
-       and dimmed behind the panel's backdrop. */
-    z-index: 8;
+  /* #center-panel button sets width:100% for the panel's own stacked
+     controls. Everything in the chat row and the chat list is a compact
+     inline control, so it has to opt out - that blanket rule is what made
+     the attach button a full-width box and the three-dot control eat 98%
+     of every chat row. Scoped by ID so specificity wins without
+     !important. */
+  #center-panel #chat-bar button,
+  #center-panel #topic-list button { width: auto; }
+  #center-panel #chat-attach { width: 26px; }
+  #center-panel #chat-input { flex: 1 1 auto; min-width: 0; }
+  #center-panel #topic-list .topic-menu-btn { width: 18px; }
+
+  #chat-attach {
+    flex: 0 0 auto; width: 26px; height: 26px; line-height: 24px;
+    padding: 0; background: none;
+    border: 1px solid rgba(255,255,255,0.22);
+    color: rgba(226,236,244,0.7); cursor: pointer;
+    font: inherit; font-size: 15px; text-align: center;
   }
+  #chat-attach:hover { color: #fff; border-color: rgba(255,255,255,0.5); }
+  #chat-attach.has-file {
+    color: #0a1420; background: rgba(240,246,252,0.9);
+    border-color: rgba(255,255,255,0.85);
+  }
+  #chat-bar {
+    /* ONE bordered container holding attach / input / THINK / SEND,
+       rather than four separate outlined boxes sitting next to each
+       other. Same arrangement modern chat apps use, drawn in Great
+       Sage's language: square corners, thin white rule, near-black
+       ground - no rounded pills, no accent colour. */
+    display: flex; gap: 8px; align-items: center;
+    margin-top: 12px; padding: 7px 9px;
+    border: 1px solid rgba(255,255,255,0.30);
+    background: rgba(0,0,0,0.55);
+  }
+  /* The children lose their own outlines - the container carries it. */
+  #center-panel #chat-bar #chat-input {
+    border: 0; background: none; padding: 4px 2px;
+    color: #e8f2ff; font: inherit; letter-spacing: 0.04em;
+  }
+  #center-panel #chat-bar #chat-input:focus { outline: none; }
+  #center-panel #chat-bar #chat-attach {
+    border: 0; font-size: 17px; color: rgba(226,236,244,0.55);
+  }
+  #center-panel #chat-bar #chat-attach:hover { color: #fff; }
+  #center-panel #chat-bar #chat-send,
+  #center-panel #chat-bar #think-toggle {
+    border: 1px solid rgba(255,255,255,0.28);
+    background: none; color: rgba(230,240,250,0.8);
+    padding: 4px 11px; font-size: 10px; letter-spacing: 0.14em;
+  }
+  #center-panel #chat-bar #chat-send:hover,
+  #center-panel #chat-bar #think-toggle:hover {
+    color: #fff; border-color: rgba(255,255,255,0.6);
+  }
+  #center-panel #chat-bar #think-toggle[aria-pressed="true"] {
+    background: rgba(240,246,252,0.9); color: #06100c;
+    border-color: rgba(255,255,255,0.9);
+  }
+  #chat-bar #ws-status { font-size: 9px; opacity: 0.45; }
   /* [hidden] alone loses to the explicit `display:flex` above (an ID
      rule always beats the UA default [hidden]{display:none} stylesheet)
      - this one's more specific than plain #chat-bar so it wins instead. */
@@ -191,8 +242,8 @@
   /* Spec S11: a visible toggle, OFF by default. Deliberation costs real
      latency, so its state has to be obvious before you send, not after. */
   #think-toggle {
-    background: none; border: 1px solid rgba(120,190,255,0.35);
-    color: rgba(200,225,255,0.65); cursor: pointer;
+    background: none; border: 1px solid rgba(255,255,255,0.22);
+    color: rgba(226,236,244,0.6); cursor: pointer;
     padding: 0 10px; margin-left: 6px; font: inherit;
     letter-spacing: 0.12em; font-size: 11px; border-radius: 2px;
   }
@@ -775,7 +826,11 @@
   .settings-group > *:last-child { margin-bottom: 10px; }
   #center-panel .panel-divider { border: none; border-top: 1px solid rgba(255,255,255,0.3); margin: 18px 0; }
   #center-panel-close {
-    position: absolute; top: 10px; right: 10px; z-index: 1;
+    /* Pushed down and in from the corner. At top:10/right:10 it sat
+       directly under the WINDOW's own minimise/maximise/close buttons, so
+       closing a panel meant aiming a few pixels below the control that
+       quits Great Sage entirely. */
+    position: absolute; top: 44px; right: 16px; z-index: 1;
     width: 28px; height: 28px;
     background: #000000; color: #ffffff; border: 1px solid #ffffff;
     cursor: pointer; font-family: Consolas, monospace; font-size: 13px;
@@ -839,7 +894,18 @@
 
   #history-list { margin-top: 10px; }
   #history-list .empty { opacity: 0.5; }
-  .history-entry { margin-bottom: 10px; }
+  .history-entry {
+    margin-bottom: 12px; max-width: 78%;
+    padding: 7px 10px;
+    border-left: 2px solid rgba(255,255,255,0.22);
+  }
+  /* Master's own turns sit right and inverted, so the two speakers are
+     told apart at a glance without reading the labels. */
+  .history-entry.user {
+    margin-left: auto; text-align: right;
+    border-left: 0; border-right: 2px solid rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.05);
+  }
   .history-entry .role-label {
     display: block; font-size: 9px; letter-spacing: 1px; opacity: 0.6; margin-bottom: 2px;
   }
@@ -863,8 +929,9 @@
     transition: opacity 140ms ease, border-color 140ms ease, background 140ms ease;
   }
   .topic-item-label {
-    flex: 1; min-width: 0;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding-right: 4px;
   }
   .topic-item:hover { opacity: 1; background: rgba(255,255,255,0.06); }
   .topic-item.active { opacity: 1; border-left-color: #ffffff; background: rgba(255,255,255,0.08); }
@@ -874,23 +941,23 @@
   #chat-layout { display: flex; gap: 16px; margin-top: 4px; align-items: stretch; }
   #chat-sidebar {
     flex: 0 0 176px; display: flex; flex-direction: column; gap: 6px;
-    border-right: 1px solid rgba(120,190,255,0.18); padding-right: 12px;
+    border-right: 1px solid rgba(255,255,255,0.12); padding-right: 12px;
   }
   #chat-sidebar > button {
-    background: none; border: 1px solid rgba(120,190,255,0.28);
+    background: none; border: 1px solid rgba(255,255,255,0.18);
     color: rgba(220,240,255,0.85); text-align: left;
     padding: 7px 10px; cursor: pointer; font: inherit;
     letter-spacing: 0.06em; border-radius: 3px;
   }
   #chat-sidebar > button:hover {
-    background: rgba(120,190,255,0.14); color: #fff;
+    background: rgba(255,255,255,0.08); color: #fff;
   }
   #memory-nav-btn.active {
-    background: rgba(170,220,255,0.9); color: #0a1420;
-    border-color: rgba(200,235,255,0.95);
+    background: rgba(240,246,252,0.9); color: #0a1420;
+    border-color: rgba(255,255,255,0.85);
   }
   .sidebar-divider {
-    border: 0; border-top: 1px solid rgba(120,190,255,0.18);
+    border: 0; border-top: 1px solid rgba(255,255,255,0.12);
     margin: 4px 0 2px;
   }
   #chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -898,12 +965,12 @@
   /* Identity above the transcript. Great Sage is the name; the model is
      technical detail and is deliberately quieter. */
   #chat-identity {
-    border-bottom: 1px solid rgba(120,190,255,0.18);
+    border-bottom: 1px solid rgba(255,255,255,0.12);
     padding-bottom: 8px; margin-bottom: 10px;
   }
   #chat-identity-name {
     font-size: 13px; letter-spacing: 0.22em; color: #eaf6ff;
-    text-shadow: 0 0 10px rgba(150,210,255,0.35);
+    text-shadow: 0 0 10px rgba(220,235,250,0.28);
   }
   #chat-identity-model {
     margin-top: 3px; font-size: 10px; letter-spacing: 0.1em;
@@ -916,16 +983,16 @@
   #memory-search {
     width: 100%; box-sizing: border-box; padding: 7px 9px;
     background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(120,190,255,0.25);
+    border: 1px solid rgba(255,255,255,0.16);
     color: #dff0ff; font: inherit; letter-spacing: 0.04em; border-radius: 3px;
   }
-  #memory-search:focus { outline: none; border-color: rgba(160,215,255,0.6); }
+  #memory-search:focus { outline: none; border-color: rgba(255,255,255,0.45); }
   #memory-list { margin-top: 10px; max-height: 320px; overflow-y: auto; }
   #memory-list .empty { opacity: 0.5; }
   .memory-item {
     display: flex; align-items: flex-start; gap: 10px;
     padding: 7px 4px 7px 8px;
-    border-left: 2px solid rgba(120,190,255,0.28);
+    border-left: 2px solid rgba(255,255,255,0.18);
     margin-bottom: 6px; line-height: 1.5;
   }
   .memory-item-text { flex: 1; min-width: 0; word-break: break-word; }
@@ -938,7 +1005,7 @@
     opacity: 0; transition: opacity 0.12s ease;
   }
   .memory-item:hover .memory-del { opacity: 1; }
-  .memory-del:hover { background: rgba(255,90,90,0.2); color: #fff; }
+  .memory-del:hover { background: rgba(255,120,120,0.16); color: #fff; }
   #memory-actions {
     display: flex; justify-content: space-between; align-items: center;
     margin-top: 12px; font-size: 11px; opacity: 0.75;
@@ -950,33 +1017,46 @@
   }
   #memory-clear-btn:hover { background: rgba(255,90,90,0.18); color: #fff; }
 
+  /* Compact square, sized to the row rather than to its own padding.
+     The first version was a wide padded control that ate the right side
+     of every chat row and overlapped the title. */
   .topic-menu-btn {
-    background: none; border: 0; cursor: pointer; padding: 0 4px;
-    color: rgba(220,240,255,0.55); font-size: 15px; line-height: 1;
+    flex: 0 0 auto;
+    width: 18px; height: 18px; line-height: 16px;
+    padding: 0; margin-left: 8px;
+    background: none; border: 1px solid rgba(255,255,255,0.16);
+    color: rgba(230,240,250,0.6);
+    font-size: 11px; text-align: center; cursor: pointer;
     opacity: 0; transition: opacity 0.12s ease, color 0.12s ease;
   }
   .topic-item:hover .topic-menu-btn { opacity: 1; }
-  .topic-menu-btn:hover { color: #ffffff; }
+  .topic-menu-btn:hover {
+    color: #fff; border-color: rgba(255,255,255,0.5);
+  }
 
-  /* Floating menu (spec S7). Fixed-positioned and appended to <body> so
-     it is never clipped by the sidebar's own overflow. */
+  /* Monochrome, thin-lined, same density as the rest of Great Sage -
+     deliberately NOT a rounded blue dropdown. */
   .topic-menu {
-    position: fixed; z-index: 40; min-width: 168px;
-    background: rgba(10,18,28,0.97);
-    border: 1px solid rgba(120,190,255,0.28);
-    border-radius: 4px; padding: 4px;
-    box-shadow: 0 6px 22px rgba(0,0,0,0.55);
-    font-size: 12px; letter-spacing: 0.04em;
+    position: fixed; z-index: 40; min-width: 150px;
+    background: rgba(6,12,10,0.97);
+    border: 1px solid rgba(255,255,255,0.22);
+    padding: 3px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+    font-size: 11px; letter-spacing: 0.08em;
   }
   .topic-menu-item {
     display: block; width: 100%; text-align: left;
     background: none; border: 0; cursor: pointer;
-    padding: 7px 10px; color: rgba(225,240,255,0.9);
-    font: inherit; letter-spacing: inherit; border-radius: 3px;
+    padding: 6px 9px; color: rgba(226,236,244,0.82);
+    font: inherit; letter-spacing: inherit;
   }
-  .topic-menu-item:hover { background: rgba(120,190,255,0.16); color: #fff; }
-  .topic-menu-item.danger { color: #ff9a9a; }
-  .topic-menu-item.danger:hover { background: rgba(255,90,90,0.18); color: #fff; }
+  .topic-menu-item:hover {
+    background: rgba(255,255,255,0.09); color: #fff;
+  }
+  .topic-menu-item.danger { color: rgba(255,168,168,0.85); }
+  .topic-menu-item.danger:hover {
+    background: rgba(255,120,120,0.14); color: #fff;
+  }
   #history-main { flex: 1; min-width: 0; }
 /* ---------------- Window controls ----------------
    The app has no native title bar (transparent=True creates the window as
@@ -1469,13 +1549,7 @@ body.mini:hover #mini-exit { opacity: 1; }
   </defs>
 </svg>
 
-<div id="chat-bar">
-  <input type="text" id="chat-input" placeholder="Say something to Great Sage..." autocomplete="off">
-  <button id="chat-send">SEND</button>
-  <button id="think-toggle" type="button" aria-pressed="false"
-          title="Let Great Sage deliberate before answering. Slower.">THINK</button>
-  <span id="ws-status">connecting...</span>
-</div>
+
 
 <div id="controls">
   TEST CONTROLS<br>
@@ -1554,6 +1628,21 @@ body.mini:hover #mini-exit { opacity: 1; }
               <button id="memory-clear-btn" type="button">Clear all</button>
             </div>
           </div>
+
+          <!-- Moved here from the Home screen. Home is the Great Sage
+               visual; typed conversation belongs in Chat Mode, and having
+               both meant two chat interfaces for one conversation. IDs are
+               unchanged, so send, THINK, the status line and every voice
+               path still bind to exactly the same elements. -->
+          <div id="chat-bar">
+          <button id="chat-attach" type="button"
+                  title="Attach an image (the model reads images)">+</button>
+          <input type="text" id="chat-input" placeholder="Ask Great Sage..." autocomplete="off">
+          <button id="chat-send">SEND</button>
+          <button id="think-toggle" type="button" aria-pressed="false"
+                  title="Let Great Sage deliberate before answering. Slower.">THINK</button>
+          <span id="ws-status">connecting...</span>
+</div>
         </div>
       </div>
     </section>
@@ -4719,6 +4808,7 @@ const MINI_CHAT_PAD = 3;
         currentTopic().updated = Date.now();
         renderHistory();
         saveChats();
+        maybeNameChat(currentTopic());
       }
     } else if (msg.type === 'audio') {
       // The words in THIS clip, revealed as it starts playing, so the
@@ -4774,6 +4864,14 @@ const MINI_CHAT_PAD = 3;
         saveChats();
       }
       if (msg.text) window.alert(msg.text);
+    } else if (msg.type === 'chat_title') {
+      const t = chatTopics.find((c) => c.id === msg.id);
+      // Only if the user has not renamed it themselves in the meantime.
+      if (t && msg.title && !t.renamed) {
+        t.title = msg.title;
+        renderTopicList();
+        saveChats();
+      }
     } else if (msg.type === 'model_info') {
       setChatIdentity(msg.model, msg.provider);
     } else if (msg.type === 'memory') {
@@ -4792,6 +4890,7 @@ const MINI_CHAT_PAD = 3;
           id: c.id, title: c.title || 'New chat',
           created: c.created, updated: c.updated,
           summary: c.summary || '',
+          titled: !!c.titled, renamed: !!c.renamed,
           messages: Array.isArray(c.messages) ? c.messages : [],
         }));
         // Deliberately does NOT select one. Restoring the sidebar is not
@@ -4872,7 +4971,9 @@ const MINI_CHAT_PAD = 3;
     renderHistory();
     saveChats();
     aiThinking = true;
-    ws.send(JSON.stringify({ type: 'chat', text, think: thinkHarder }));
+    ws.send(JSON.stringify({ type: 'chat', text, think: thinkHarder,
+                             images: pendingImages }));
+    clearAttachment();
     // Deliberation measured at 210-380s on this machine, so without a
     // visible state the window looks frozen for minutes. Spec S11 allows
     // showing THAT it is thinking - never the reasoning itself, which
@@ -4910,6 +5011,55 @@ const MINI_CHAT_PAD = 3;
     thinkBusyTimer = setInterval(tick, 1000);
   }
   window.__endThinkingBusy = () => setThinkingBusy(false);
+
+  // Image attachment. The active model is multimodal, so this is a real
+  // capability rather than a placeholder - the same model that answers
+  // also reads the picture, at no extra VRAM.
+  //
+  // One turn only: the image is cleared after sending, because a base64
+  // image re-sent every turn would fill the context window in a few
+  // messages (see ChatEngine._build_outgoing).
+  let pendingImages = [];
+  const chatAttachBtn = document.getElementById('chat-attach');
+  const chatFileInput = document.createElement('input');
+  chatFileInput.type = 'file';
+  chatFileInput.accept = 'image/*';
+  chatFileInput.multiple = false;
+  chatFileInput.style.display = 'none';
+  document.body.appendChild(chatFileInput);
+
+  function clearAttachment() {
+    pendingImages = [];
+    if (chatAttachBtn) {
+      chatAttachBtn.classList.remove('has-file');
+      chatAttachBtn.textContent = '+';
+      chatAttachBtn.title = 'Attach an image (the model reads images)';
+    }
+  }
+  if (chatAttachBtn) {
+    chatAttachBtn.addEventListener('click', () => {
+      if (pendingImages.length) { clearAttachment(); return; }  // click again to cancel
+      chatFileInput.click();
+    });
+  }
+  chatFileInput.addEventListener('change', () => {
+    const f = chatFileInput.files && chatFileInput.files[0];
+    chatFileInput.value = '';
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      // Ollama wants raw base64, without the data: prefix.
+      const s = String(reader.result || '');
+      const comma = s.indexOf(',');
+      pendingImages = [comma >= 0 ? s.slice(comma + 1) : s];
+      if (chatAttachBtn) {
+        chatAttachBtn.classList.add('has-file');
+        chatAttachBtn.textContent = '1';
+        chatAttachBtn.title = f.name + ' attached - click to remove';
+      }
+    };
+    reader.readAsDataURL(f);
+  });
 
   chatSendBtn.addEventListener('click', sendChatMessage);
   chatInput.addEventListener('keydown', (e) => {
@@ -7495,6 +7645,26 @@ const MINI_CHAT_PAD = 3;
     });
   }
 
+  // Ask the model to name a chat, ONCE, after its first exchange.
+  // Titles used to be the first 40 characters of the first message, so
+  // the sidebar filled with things like "could you check why the render"
+  // - unreadable at a glance and useless for finding anything later.
+  //
+  // Only once: a title that rewrites itself as the topic drifts makes
+  // the list move under the user, which is worse than a slightly stale
+  // name. `titled` marks it done and is saved with the chat, so a
+  // restart does not re-request titles for every conversation.
+  function maybeNameChat(topic) {
+    if (!topic || topic.titled) return;
+    const users = topic.messages.filter((m) => m.role === 'user').length;
+    const bots = topic.messages.filter((m) => m.role !== 'user').length;
+    if (users < 1 || bots < 1) return;
+    topic.titled = true;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'suggest_title', id: topic.id,
+                             messages: topic.messages.slice(0, 4) }));
+  }
+
   // Push the whole list to the server, coalesced: a burst of edits (the
   // message, the reply landing, a rename) becomes one write instead of
   // three. See core/chat_store.py for why the whole list is sent.
@@ -7542,6 +7712,8 @@ const MINI_CHAT_PAD = 3;
       const clean = name.trim();
       if (!clean) return;
       topic.title = clean.slice(0, 120);
+      topic.renamed = true;        // a generated title must not overwrite this
+      topic.titled = true;
       renderTopicList();
       saveChats();
     });
