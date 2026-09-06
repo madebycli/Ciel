@@ -783,8 +783,15 @@
      intro that would take it off - which left it at blur(36px)
      brightness(0.08) permanently, i.e. "the overlay visuals are gone".
      The class removal in script fixes the normal case; this makes it
-     structural, so no future ordering bug can blank the overlay again. */
-  body.mini {
+     structural, so no future ordering bug can blank the overlay again.
+
+     Scoped to .startup-intro, NOT to body.mini on its own. A blanket
+     "filter: none !important" on the overlay also killed lens-blur,
+     which fires on core click in BOTH modes (see playLensFocus) - so
+     opening the overlay's menu lost its focus-pull entirely. This
+     cancels exactly the one state that can strand the overlay blank,
+     and leaves every deliberate body filter working. */
+  body.mini.startup-intro {
     filter: none !important;
     transform: none !important;
   }
