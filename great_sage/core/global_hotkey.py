@@ -74,17 +74,32 @@ class GlobalHotkey:
         self._thread = None
         self._stop = threading.Event()
         self.active = False
+        # RegisterHotKey runs on the worker thread, so start() has to wait
+        # for its verdict rather than assume the thread starting means the
+        # key was claimed. Without this, start() returned True for a
+        # combination another application already owned, the UI reported
+        # success, and the key was silently dead.
+        self._ready = threading.Event()
+        self._ok = False
 
     def start(self) -> bool:
         parsed = parse(self.binding)
         if parsed is None:
             log.warning("Global hotkey %r could not be parsed", self.binding)
+            self._ok = False
+            self._ready.set()
             return False
         self._stop.clear()
+        self._ready.clear()
+        self._ok = False
         self._thread = threading.Thread(target=self._run, args=parsed,
                                         daemon=True)
         self._thread.start()
-        return True
+        # The registration itself is immediate; the wait is only to cross
+        # the thread boundary. A timeout means something is badly wrong,
+        # and reporting failure is the safe answer either way.
+        self._ready.wait(2.0)
+        return self._ok
 
     def stop(self):
         self._stop.set()
@@ -98,11 +113,22 @@ class GlobalHotkey:
         """
         if (binding or "").strip().lower() == (self.binding or "").strip().lower():
             return True
+        previous = self.binding
         self.stop()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
         self.binding = binding
-        return self.start()
+        if self.start():
+            return True
+        # The old registration was released before trying the new one, so
+        # a failure here would otherwise leave NO working key at all -
+        # the user picks a combination some other app owns and loses the
+        # one that was working. Put the previous one back.
+        log.warning("Keeping the previous hotkey %r; %r could not be "
+                    "registered", previous, binding)
+        self.binding = previous
+        self.start()
+        return False
 
     def _run(self, mods, key):
         user32 = ctypes.windll.user32
@@ -110,8 +136,12 @@ class GlobalHotkey:
             # Almost always means another application already owns it.
             log.warning("Could not register the global hotkey %r - another "
                         "application may already be using it", self.binding)
+            self._ok = False
+            self._ready.set()
             return
         self.active = True
+        self._ok = True
+        self._ready.set()
         log.info("Global hotkey active: %s (works from any window)",
                  self.binding)
         msg = wt.MSG()

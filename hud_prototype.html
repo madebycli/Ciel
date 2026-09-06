@@ -1042,6 +1042,16 @@
   }
   #center-panel label:hover { color: #cfcfcf; }
   .slider-label { display: block; font-size: 10px; margin-top: 4px; opacity: 0.8; }
+  /* Small explanatory text under a control. Monochrome and dimmed, like
+     everything else in this panel - #ws-status signals its state with
+     opacity rather than colour, so a red error string would be the only
+     coloured thing in the whole UI. A problem is shown by going to full
+     brightness with a rule down the left instead. */
+  .setting-hint { font-size: 9.5px; line-height: 1.5; opacity: 0.5; margin: 5px 0 2px; }
+  .setting-hint:empty { display: none; }
+  .setting-hint.warn {
+    opacity: 1; border-left: 1px solid #ffffff; padding-left: 7px;
+  }
   #advanced-panel {
     margin-top: 8px; padding: 10px 10px 4px;
     border: 1px solid rgba(255,255,255,0.25);
@@ -2072,8 +2082,11 @@ body.mini:hover #mini-exit { opacity: 1; }
 
       <h4>VOICE INPUT</h4>
       <div id="voice-input-settings">
-        <label class="slider-label">Push-to-talk key</label>
+        <label class="slider-label">Voice key &mdash; global</label>
         <button id="ptt-rebind-btn" data-combo="alt+1" title="Works from any window, even while a game has focus">Alt+1</button>
+        <div class="setting-hint">Press once to start listening, press again to
+          send. Works from any window &mdash; you do not have to leave your game.</div>
+        <div id="ptt-status" class="setting-hint"></div>
 
         <label>
           <input type="checkbox" id="wake-word-toggle">
@@ -5212,6 +5225,38 @@ const MINI_CHAT_PAD = 3;
       if (Array.isArray(msg.phrases)) wakeWordsInput.value = msg.phrases.join('\n');
     } else if (msg.type === 'voice_text') {
       receiveVoiceText(msg.text);
+    } else if (msg.type === 'hotkey_status') {
+      // Whether the voice key actually claimed its combination. Windows
+      // silently refuses one another application already owns, so without
+      // this the key just does nothing and nothing anywhere says why.
+      const el = document.getElementById('ptt-status');
+      if (el) {
+        if (msg.failed) {
+          el.className = 'setting-hint warn';
+          el.textContent = comboLabel(msg.failed) + ' is already used by another '
+            + 'application, so it was not changed. Still using '
+            + comboLabel(msg.binding) + ' — pick a different key.';
+        } else if (!msg.active) {
+          el.className = 'setting-hint warn';
+          el.textContent = comboLabel(msg.binding || '') + ' could not be registered '
+            + '— another application already uses it. Pick a different key.';
+        } else {
+          el.className = 'setting-hint';
+          el.textContent = comboLabel(msg.binding) + ' is active.';
+        }
+      }
+      // A rejected rebind leaves the button showing a key that is not the
+      // one actually registered. Put it back to the truth.
+      if (msg.failed && msg.binding) setPttCombo(msg.binding);
+    } else if (msg.type === 'ptt_state') {
+      // The voice key is a GLOBAL toggle owned by Python, so the page
+      // cannot see it being pressed - by design, since it has to work
+      // while a game has focus. The listening visuals follow this
+      // message instead of a local key event.
+      const on = !!msg.listening;
+      if (on && !pttActive) pttPulse = 1;   // one decaying flash on open
+      pttActive = on;
+      if (!on) micLevelTarget = 0;          // no more mic_level is coming
     } else if (msg.type === 'mic_level') {
       // Raw mic RMS is small (typical speech ~0.01-0.1) - gain it up so
       // the outer ring's pulse actually reads as reacting to voice.
@@ -5524,23 +5569,23 @@ const MINI_CHAT_PAD = 3;
       scheduleSaveSettings();
       return;
     }
-    if (eventCombo(e) === pttRebindBtn.dataset.combo && !pttActive) {
-      e.preventDefault();
-      pttActive = true;
-      pttPulse = 1; // fire one decaying "listening" flash - see animate()
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ptt_start' }));
-    }
-  });
-  document.addEventListener('keyup', (e) => {
-    if (!pttActive) return;
-    const parsed = parseCombo(pttRebindBtn.dataset.combo);
-    const key = e.key.toLowerCase();
-    if (key === parsed.key ||
-        (parsed.ctrl && key === 'control') || (parsed.alt && key === 'alt') || (parsed.shift && key === 'shift')) {
-      pttActive = false;
-      micLevelTarget = 0; // stop pulsing the outer ring - no more mic_level messages will arrive
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ptt_stop' }));
-    }
+    // The voice key is NOT handled here any more.
+    //
+    // It used to be: keydown sent ptt_start, keyup sent ptt_stop, which is
+    // hold-to-talk. The global hotkey drives the SAME recorder from
+    // Python, and it is a toggle (RegisterHotKey reports the press but
+    // never the release). With the HUD focused, one press ran both - the
+    // hotkey opened the mic and flipped its flag, this handler opened it
+    // again, and the key release closed it about a third of a second
+    // later while the hotkey still believed it was listening. The next
+    // press then took the "stop" branch and stopped nothing. Measured in
+    // the packaged build: two presses produced five toggle events and a
+    // 0.338s recording.
+    //
+    // One owner now. Python holds the key, this page only shows what it
+    // is doing (see the ptt_state handler). preventDefault stays so the
+    // combination does not also do something in the page.
+    if (eventCombo(e) === pttRebindBtn.dataset.combo) e.preventDefault();
   });
 
   wakeWordToggle.addEventListener('change', () => {
@@ -6013,38 +6058,41 @@ const MINI_CHAT_PAD = 3;
   let _lastFrameMs = performance.now();
   // 60 is plenty for this scene; the extra frames on a high-refresh
   // monitor cost the GPU that the model needs and change nothing visible.
-  // 48 rather than 60. The scene is slow-moving - rings, breathing, a
-  // drifting wireframe - and nothing in it reads differently above the
-  // high forties, while every frame is 8 megapixels of fill on a card
-  // shared with the model and the voice.
-  const IDLE_FPS_CAP = 48;
-  // 20 rather than 24: the scene is decorative while Great Sage works,
-  // and every frame not drawn is GPU handed back to the answer.
-  const BUSY_FPS_CAP = 20;
+  // 120. This was 48 on the theory that a slow-moving scene reads the
+  // same at any rate above the high forties. On a 185Hz monitor it does
+  // not - Krazaa called it "ultra slow" immediately. Smoothness of the
+  // motion is the product here, so the frame rate is set by how it feels
+  // and the GPU is saved elsewhere (see fgQuality, which is where the
+  // real win was: 94% -> 42% while answering).
+  const IDLE_FPS_CAP = 120;
+  // While the model is working. Halved rather than gutted - this now
+  // pairs with the drop to 1x foreground quality, which frees far more
+  // GPU than dropping frames ever did, so it does not have to be brutal.
+  const BUSY_FPS_CAP = 60;
 
   // The main window keeps rendering at full rate while it sits behind a
   // game or a browser. Unfocused it steps down instead.
   //
-  // 30, NOT something much lower. This is a two-monitor machine, and an
-  // unfocused window is not necessarily an unwatched one - the HUD can
-  // easily be sitting fully visible on the second screen while a game
-  // has focus on the first. A deep throttle would make it visibly choppy
-  // there, which is the exact complaint this whole change set is fixing.
-  // 30 is the cap the overlay already runs at and reads as smooth, and
-  // it still cuts most of the idle fill.
+  // NO unfocused frame cap. There was one; it is gone, and it must not
+  // come back in this form.
   //
-  // Deliberately NOT applied to either overlay. The mini HUD and the
-  // standalone overlay window are meant to be watched WHILE something
-  // else has focus - that is the entire point of them - which is why the
-  // miniMode branch is tested first below.
+  // It was gated on document.hasFocus(), which is not trustworthy here.
+  // The page runs inside a WebView2 CHILD control, and that control does
+  // not necessarily hold keyboard focus just because its window is the
+  // foreground one. Measured in the real window, with an on-screen
+  // readout: one run reported foc=0 while the HUD WAS the foreground
+  // window and ran at 58.5fps - the throttle applying when it should not
+  // have. A later run reported it correctly. So it is right most of the
+  // time and silently wrong some of the time.
   //
-  // Polled rather than driven by focus/blur listeners: a single missed
-  // 'focus' event would strand the HUD at the lower rate with no way
-  // back, and document.hasFocus() is a trivial call to make once a frame.
-  const UNFOCUSED_FPS_CAP = 30;
-  function windowHasFocus() {
-    try { return document.hasFocus(); } catch (err) { return true; }
-  }
+  // Intermittently halving the frame rate for no visible reason is worse
+  // than never throttling at all, and it is what "holy crap its ultra
+  // slow now" was. Removing the throttle took the same scene from 58.5
+  // to 90fps.
+  //
+  // If this is worth doing again, the signal must come from Python, which
+  // owns the window and can ask Windows which one is in front, rather
+  // than from a page that can only see its own control.
 
   function animate() {
     requestAnimationFrame(animate);
@@ -6079,8 +6127,6 @@ const MINI_CHAT_PAD = 3;
       _cap = miniCfg.fpsCap || 30;
     } else if (window.__modeFpsCap) {
       _cap = window.__modeFpsCap;                     // GAMING / SLEEP
-    } else if (!IS_STANDALONE_OVERLAY && !windowHasFocus()) {
-      _cap = UNFOCUSED_FPS_CAP;                       // behind a game/browser
     } else {
       _cap = aiThinking ? BUSY_FPS_CAP : IDLE_FPS_CAP;
     }

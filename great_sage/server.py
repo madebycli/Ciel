@@ -881,6 +881,25 @@ async def run_server(engine, voice) -> None:
             voice.set_sink(sink)
         _start_chat_thread(text, engine, voice, sink, ws, loop)
 
+    def _send_ptt_state(listening: bool) -> None:
+        """Tell the page whether the mic is open.
+
+        The keybind is a global toggle now, so the page no longer learns
+        about it from its own key events - it cannot, since the whole
+        point is that it works while another window has focus. The
+        listening ring follows this instead.
+        """
+        ws = active_connection["websocket"]
+        if ws is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"type": "ptt_state",
+                                    "listening": bool(listening)})), loop
+            )
+        except websockets.exceptions.ConnectionClosed:
+            pass
+
     def _send_mic_level(level: float) -> None:
         # Fire-and-forget (no .result()) - this is called from the audio
         # callback thread for every captured block, so it must not block
@@ -950,6 +969,7 @@ async def run_server(engine, voice) -> None:
             ai_settings.load(settings.AI_SETTINGS_PATH).get("mode"))
         if _hotkey_listening["on"]:
             _hotkey_listening["on"] = False
+            _send_ptt_state(False)
             log.info("Global hotkey: stop listening")
             threading.Thread(
                 target=_log_exceptions(ptt_recorder.stop,
@@ -964,8 +984,10 @@ async def run_server(engine, voice) -> None:
             log.info("Global hotkey: listening (mode %s)", mode.label)
             try:
                 ptt_recorder.start()
+                _send_ptt_state(True)
             except Exception:
                 _hotkey_listening["on"] = False
+                _send_ptt_state(False)
                 log.exception("Could not start recording from the hotkey")
 
     # ---- Automatic GAMING mode (Phase 10) ----
@@ -1068,6 +1090,20 @@ async def run_server(engine, voice) -> None:
         sink = BrowserAudioSink(websocket, loop)
         is_log_subscriber = False
         log.info("Client connected")
+        # A voice message started from the GLOBAL hotkey needs somewhere to
+        # be delivered, and active_connection used to be set ONLY by a typed
+        # chat or by the page's own push-to-talk message. On a fresh launch
+        # that meant using the hotkey before typing anything transcribed the
+        # speech and then dropped it with a warning - the hotkey appeared
+        # to do nothing at all, which is the whole point of it.
+        #
+        # Claimed only when the slot is empty, so this never steals routing
+        # from the window that is actually being talked to: a settings or
+        # history panel connects to this same server, and anything that
+        # really talks re-points the slot below regardless.
+        if active_connection["websocket"] is None:
+            active_connection["websocket"] = websocket
+            active_connection["sink"] = sink
         # Hand back the saved conversations. Sent on connect rather than
         # on request so the sidebar is populated by the time the page is
         # interactive - the HUD owns the list from then on.
@@ -1080,6 +1116,19 @@ async def run_server(engine, voice) -> None:
             pass
         except Exception:
             log.exception("Could not restore saved chats")
+        # Whether the voice key actually claimed the combination. Windows
+        # refuses a combination another application already owns, and it
+        # fails at the OS level with nothing visible in the UI - the key
+        # just does nothing, for ever, with no explanation. The panel says
+        # so now.
+        try:
+            await websocket.send(json.dumps({
+                "type": "hotkey_status",
+                "binding": _hotkey.binding if _hotkey is not None else None,
+                "active": bool(_hotkey is not None and _hotkey.active),
+            }))
+        except websockets.exceptions.ConnectionClosed:
+            pass
         try:
             # Identity header (spec correction S5): Great Sage is the name,
             # the model is technical detail. Sent from here so switching
@@ -1367,15 +1416,20 @@ async def run_server(engine, voice) -> None:
                         # than at the next launch.
                         combo = blob.get("ptt-combo")
                         if _hotkey is not None and isinstance(combo, str) and combo:
-                            if _hotkey.rebind(combo):
-                                log.info("Push-to-talk key is now %s "
+                            ok = _hotkey.rebind(combo)
+                            if ok:
+                                log.info("Voice key is now %s "
                                          "(works from any window)", combo)
-                            else:
-                                await websocket.send(json.dumps({
-                                    "type": "error",
-                                    "message": ("Could not register %s - another "
-                                                "application may already use it."
-                                                % combo)}))
+                            # Either way the panel is told what is actually
+                            # registered, which after a failed rebind is the
+                            # PREVIOUS key - global_hotkey puts it back
+                            # rather than leaving no working key at all.
+                            await websocket.send(json.dumps({
+                                "type": "hotkey_status",
+                                "binding": _hotkey.binding,
+                                "active": bool(_hotkey.active),
+                                "failed": None if ok else combo,
+                            }))
                 elif msg_type == "chat":
                     active_connection["websocket"] = websocket
                     active_connection["sink"] = sink
@@ -1477,6 +1531,12 @@ async def run_server(engine, voice) -> None:
             log.info("Client disconnected")
             if is_log_subscriber:
                 log_handler.remove_client(websocket)
+            # Holding a dead socket here would send every later voice
+            # message into a closed connection instead of to whichever
+            # window is still open.
+            if active_connection["websocket"] is websocket:
+                active_connection["websocket"] = None
+                active_connection["sink"] = None
             # Unblock anything still waiting on an ack from this connection
             # rather than leaving a background thread hung forever.
             sink.notify_audio_ended()
