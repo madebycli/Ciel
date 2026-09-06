@@ -576,6 +576,26 @@
   body.startup-snap {
     transition: none !important;
   }
+  /* The intro state is on <body> in the MARKUP now, so the browser's
+     FIRST paint is already blurred and dark. It used to be applied by
+     JavaScript, which meant the page painted the finished UI - chat bar,
+     test controls, a bare white line where the scene had not drawn yet -
+     for as long as it took the script to reach that line, and only then
+     blinked into the intro. Same flash the overlay had before it learned
+     to stay hidden until the page said it was ready.
+
+     Controls floating over the 3D scene are held back too, so none of
+     them hovers over an empty canvas. */
+  body.startup-intro #chat-bar,
+  body.startup-intro #controls,
+  body.startup-intro #meter,
+  body.startup-intro #center-panel-overlay {
+    opacity: 0;
+    pointer-events: none;
+  }
+  #chat-bar, #controls, #meter {
+    transition: opacity 420ms ease-out;
+  }
 
   /* ---------- Unified center panel (Settings + History) ---------- */
   #center-panel-overlay {
@@ -1302,7 +1322,7 @@ body.mini:hover #mini-exit { opacity: 1; }
 
 </style>
 </head>
-<body>
+<body class="startup-snap startup-active startup-intro">
 
 <div id="canvas-wrap"></div>
 
@@ -1993,7 +2013,33 @@ Hey Ciel</textarea>
     // so it has to be recomputed against the new viewport.
     placeCaption();
   }
-  window.addEventListener('resize', handleResize);
+  // Resize is DEBOUNCED, because handleResize is expensive: it
+  // reallocates the two render targets and the renderer's drawing
+  // buffer. Dragging a window edge fires resize dozens of times a
+  // second, and reallocating GPU textures that often is what made the
+  // visuals flicker and stutter while resizing.
+  //
+  // Leading edge fires immediately so a single resize still feels
+  // instant; everything during a continuous drag collapses into one
+  // rebuild 110ms after the drag stops. In between, the existing frame
+  // is simply stretched by the browser, which reads as smooth rather
+  // than as flashing.
+  let resizeDebounce = null;
+  let lastResizeRun = 0;
+  function onResizeEvent() {
+    const now = performance.now();
+    clearTimeout(resizeDebounce);
+    if (now - lastResizeRun > 400) {     // first event of a new gesture
+      lastResizeRun = now;
+      handleResize();
+      return;
+    }
+    resizeDebounce = setTimeout(() => {
+      lastResizeRun = performance.now();
+      handleResize();
+    }, 110);
+  }
+  window.addEventListener('resize', onResizeEvent);
   // Belt-and-suspenders: pywebview's native window (maximize/fullscreen
   // especially) doesn't reliably fire a DOM 'resize' event on this page,
   // so the renderer/canvas kept whatever size they had at launch while
