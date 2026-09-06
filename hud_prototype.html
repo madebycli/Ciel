@@ -6080,7 +6080,14 @@ const MINI_CHAT_PAD = 3;
     // the frame rate. Without this a 30fps cap halves every animation,
     // and an uncapped rate speeds them all up - which is exactly what
     // happened when the frame limiter was briefly removed.
-    const frameScale = Math.min(4, dt * 60);
+    // Ceiling 6, not 4. dt is ALREADY clamped to 0.1s above, so this can
+    // never exceed 6 anyway - the tighter 4 was a second clamp that bit
+    // at 15fps and below. SLEEP mode caps the HUD at 10fps, where the
+    // true scale is 6: clamping to 4 ran that whole scene at 67% speed,
+    // and the new unfocused 12fps cap sat in the same zone. Raising it
+    // to the value dt already guarantees makes every cap animate at real
+    // time, while the multi-second-gap guard stays exactly where it was.
+    const frameScale = Math.min(6, dt * 60);
     // t is this scene's master phase - most shader and motion timing reads
     // it. Advancing it by frameScale rather than a flat 0.01 is what makes
     // the WHOLE scene frame-rate independent in one line, instead of
