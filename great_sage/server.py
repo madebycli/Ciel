@@ -865,6 +865,33 @@ async def run_server(engine, voice) -> None:
     # viewer that never sends "chat" at all.
     active_connection = {"websocket": None, "sink": None}
 
+    # Every live connection that could receive a voice reply, by role.
+    # Needed because the slot has to FALL BACK, not empty itself: closing
+    # an overlay while the HUD is still open used to leave nowhere to
+    # deliver to until the user typed something.
+    voice_clients = {}          # websocket -> (role, sink)
+
+    def _claim_voice_route(websocket, sink):
+        active_connection["websocket"] = websocket
+        active_connection["sink"] = sink
+        if voice is not None:
+            voice.set_sink(sink)
+
+    def _release_voice_route(websocket):
+        voice_clients.pop(websocket, None)
+        if active_connection["websocket"] is not websocket:
+            return
+        # Prefer the HUD; an overlay will do. Anything still open beats
+        # leaving the next voice reply with nowhere to go.
+        for want in ("hud", "overlay"):
+            for ws_other, (role, sink_other) in voice_clients.items():
+                if role == want:
+                    log.info("Voice routing falls back to the %s", role)
+                    _claim_voice_route(ws_other, sink_other)
+                    return
+        active_connection["websocket"] = None
+        active_connection["sink"] = None
+
     def _route_voice_text(text: str) -> None:
         ws = active_connection["websocket"]
         sink = active_connection["sink"]
@@ -1097,21 +1124,28 @@ async def run_server(engine, voice) -> None:
     async def handler(websocket):
         sink = BrowserAudioSink(websocket, loop)
         is_log_subscriber = False
-        log.info("Client connected")
-        # A voice message started from the GLOBAL hotkey needs somewhere to
-        # be delivered, and active_connection used to be set ONLY by a typed
-        # chat or by the page's own push-to-talk message. On a fresh launch
-        # that meant using the hotkey before typing anything transcribed the
-        # speech and then dropped it with a warning - the hotkey appeared
-        # to do nothing at all, which is the whole point of it.
+        # Which window, at the socket level. Several connect to this same
+        # server and they are otherwise indistinguishable in the log, so a
+        # connection that misbehaves cannot be told from one that does not.
+        try:
+            _peer = "%s:%s" % (websocket.remote_address[0],
+                               websocket.remote_address[1])
+        except Exception:
+            _peer = "?"
+        try:
+            _ua = (websocket.request.headers.get("User-Agent") or "")[-60:]
+        except Exception:
+            _ua = ""
+        log.info("Client connected (%s) %s", _peer, _ua)
+        # The routing slot is NOT claimed here. Claiming it on connect -
+        # "whoever got here first" - looked right and was wrong: several
+        # windows connect to this same server, and the first of them is
+        # not reliably the HUD. Krazaa hit exactly that: the voice key
+        # recorded correctly and the reply went to a window nobody was
+        # looking at, and it only started working after typing a message,
+        # because typing re-points the slot below.
         #
-        # Claimed only when the slot is empty, so this never steals routing
-        # from the window that is actually being talked to: a settings or
-        # history panel connects to this same server, and anything that
-        # really talks re-points the slot below regardless.
-        if active_connection["websocket"] is None:
-            active_connection["websocket"] = websocket
-            active_connection["sink"] = sink
+        # The page says which window it is instead - see "hello".
         # Hand back the saved conversations. Sent on connect rather than
         # on request so the sidebar is populated by the time the page is
         # interactive - the HUD owns the list from then on.
@@ -1438,6 +1472,23 @@ async def run_server(engine, voice) -> None:
                                 "active": bool(_hotkey.active),
                                 "failed": None if ok else combo,
                             }))
+                elif msg_type == "hello":
+                    # Which window this connection belongs to. Only the
+                    # main HUD is a destination for a voice reply; a
+                    # settings or history panel must never take it, and
+                    # the standalone overlay has its own.
+                    role = str(data.get("role") or "?")[:40]
+                    log.info("Client is the %s", role)
+                    if role in ("hud", "overlay"):
+                        voice_clients[websocket] = (role, sink)
+                        _claim_voice_route(websocket, sink)
+                elif msg_type == "page_error":
+                    # An exception inside the page. Invisible until now:
+                    # the window just sat there wrong while this side
+                    # logged a completely healthy startup.
+                    log.error("PAGE ERROR: %s | %s",
+                              str(data.get("what"))[:200],
+                              str(data.get("detail"))[:600])
                 elif msg_type == "chat":
                     active_connection["websocket"] = websocket
                     active_connection["sink"] = sink
@@ -1542,9 +1593,7 @@ async def run_server(engine, voice) -> None:
             # Holding a dead socket here would send every later voice
             # message into a closed connection instead of to whichever
             # window is still open.
-            if active_connection["websocket"] is websocket:
-                active_connection["websocket"] = None
-                active_connection["sink"] = None
+            _release_voice_route(websocket)
             # Unblock anything still waiting on an ack from this connection
             # rather than leaving a background thread hung forever.
             sink.notify_audio_ended()

@@ -5288,6 +5288,19 @@ const MINI_CHAT_PAD = 3;
     ws.addEventListener('open', () => {
       wsStatusEl.textContent = 'AI: connected';
       wsStatusEl.className = 'connected';
+      // Say WHICH window this is. Several connect to the same server -
+      // the HUD, the standalone overlay, and each settings/history panel
+      // it opens - and voice replies have to reach the one the user is
+      // actually talking to. The server used to guess by taking whichever
+      // connected first, which is how a held voice key could record fine
+      // and then deliver the reply to a window nobody was looking at.
+      try {
+        ws.send(JSON.stringify({
+          type: 'hello',
+          role: IS_STANDALONE_OVERLAY ? 'overlay'
+                : (PANEL_WINDOW ? ('panel:' + PANEL_WINDOW) : 'hud'),
+        }));
+      } catch (err) { /* the socket just opened; nothing useful to do */ }
     });
     ws.addEventListener('close', () => {
       wsStatusEl.textContent = 'AI: disconnected - retrying...';
@@ -5308,6 +5321,34 @@ const MINI_CHAT_PAD = 3;
     ws.addEventListener('message', handleServerMessage);
   }
   connectWebSocket();
+
+  // Report page-side failures to the server log.
+  //
+  // An exception in the inline script is completely invisible from
+  // outside: the Python side logs a healthy startup, and the window
+  // simply sits there wrong. Every instance of that in this project -
+  // the blank HUD, the stuck panel, a list that never leaves "(waiting
+  // for AI connection...)" - was diagnosed by guesswork because nothing
+  // anywhere recorded the actual error. Now it goes in the same log as
+  // everything else.
+  function reportPageError(what, detail) {
+    try {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'page_error', what: String(what),
+                                 detail: String(detail).slice(0, 800) }));
+      }
+    } catch (err) { /* reporting must never itself throw */ }
+  }
+  window.addEventListener('error', (e) => {
+    reportPageError(e.message || 'error',
+                    (e.filename || '') + ':' + (e.lineno || 0) + ' ' +
+                    ((e.error && e.error.stack) || ''));
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e.reason;
+    reportPageError('unhandled promise rejection',
+                    (r && (r.stack || r.message)) || r);
+  });
 
   function sendChatMessage() {
     const text = chatInput.value.trim();
