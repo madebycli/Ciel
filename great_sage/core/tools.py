@@ -483,16 +483,31 @@ _TRIGGERS = _TRIGGERS + (
 # ---------------------------------------------------------------------
 
 def _web_allowed() -> bool:
+    """Both the permission AND the mode have to agree - see
+    ai_settings.web_allowed. PRIVATE mode blocks the network whatever the
+    checkbox says, which is what makes it a guarantee rather than a
+    label."""
     try:
         from great_sage.config import settings as _s
         from great_sage.core import ai_settings as _ai
-        return bool(_ai.load(_s.AI_SETTINGS_PATH).get("allow_web"))
+        return _ai.web_allowed(_ai.load(_s.AI_SETTINGS_PATH))
     except Exception:
         return False
 
 
 def _require_web():
     if not _web_allowed():
+        try:
+            from great_sage.config import settings as _s
+            from great_sage.core import ai_settings as _ai, modes as _m
+            mode = _m.get(_ai.load(_s.AI_SETTINGS_PATH).get("mode"))
+            if not mode.allow_web:
+                raise ToolError(
+                    "No external link exists in %s mode." % mode.label)
+        except ToolError:
+            raise
+        except Exception:
+            pass
         raise ToolError(
             "Web access is switched off. Master can enable it in Chat Mode "
             "-> AI settings -> Permissions.")

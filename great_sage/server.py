@@ -161,7 +161,7 @@ import sounddevice as sd
 import websockets
 
 from great_sage.config import settings
-from great_sage.core import (ai_settings, chat_store, guardrails,
+from great_sage.core import (ai_settings, chat_store, guardrails, modes,
                              hud_settings, memory,
                              tools as tool_layer,
                              personality,
@@ -356,6 +356,35 @@ def _summarise_chat(provider, title, messages):
         "Do not copy the conversation back. Do not add commentary.\n\n"
         + body)
     return provider.send_message([{"role": "user", "content": prompt}]).strip()
+
+
+def _apply_mode(engine, cfg, send_json=None):
+    """Put a mode's limits into effect (spec S39/S40).
+
+    The one that does real work is GAMING: keep_alive 0 means Ollama drops
+    the model the moment a reply finishes, which measured 4052MB of VRAM
+    handed straight back. SLEEP does the same. Everything else leaves the
+    model resident, because reloading costs about four seconds on the next
+    message and that is only worth paying when the GPU is wanted
+    elsewhere.
+    """
+    mode = modes.get((cfg or {}).get("mode"))
+    provider = getattr(engine, "provider", None)
+    if provider is not None and hasattr(provider, "keep_alive"):
+        provider.keep_alive = 0 if not mode.keep_model_loaded else None
+        if not mode.keep_model_loaded and hasattr(provider, "unload"):
+            # Do not wait for the next reply to finish - the point of the
+            # mode is to free the card NOW.
+            threading.Thread(target=provider.unload, daemon=True).start()
+    log.info("Mode: %s (model resident=%s, hud fps=%s, wake word=%s, "
+             "web=%s, online=%s)", mode.label, mode.keep_model_loaded,
+             mode.hud_fps or "normal", mode.wake_word, mode.allow_web,
+             mode.allow_online)
+    if send_json is not None:
+        send_json({"type": "mode", "mode": mode.name, "label": mode.label,
+                   "hud_fps": mode.hud_fps, "wake_word": mode.wake_word,
+                   "description": mode.description})
+    return mode
 
 
 def _apply_provider(engine, cfg):
@@ -841,8 +870,14 @@ async def run_server(engine, voice) -> None:
             # Identity header (spec correction S5): Great Sage is the name,
             # the model is technical detail. Sent from here so switching
             # models never means editing the page.
-            _apply_provider(engine,
-                            ai_settings.load(settings.AI_SETTINGS_PATH))
+            _cfg = ai_settings.load(settings.AI_SETTINGS_PATH)
+            _apply_provider(engine, _cfg)
+            _mode = modes.get(_cfg.get("mode"))
+            await websocket.send(json.dumps({
+                "type": "mode", "mode": _mode.name, "label": _mode.label,
+                "hud_fps": _mode.hud_fps, "wake_word": _mode.wake_word,
+                "description": _mode.description}))
+            _apply_mode(engine, _cfg)
             await websocket.send(json.dumps({
                 "type": "ai_settings",
                 "settings": ai_settings.public_view(
@@ -1001,6 +1036,12 @@ async def run_server(engine, voice) -> None:
                             current, data.get("settings") or {})
                         ai_settings.save(settings.AI_SETTINGS_PATH, merged)
                         _apply_provider(engine, merged)
+                        _m = _apply_mode(engine, merged)
+                        await websocket.send(json.dumps({
+                            "type": "mode", "mode": _m.name,
+                            "label": _m.label, "hud_fps": _m.hud_fps,
+                            "wake_word": _m.wake_word,
+                            "description": _m.description}))
                         log.info("AI settings saved (provider=%s, tts=%s, "
                                  "keys set: %s)",
                                  merged.get("chat_provider"),

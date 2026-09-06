@@ -1121,6 +1121,7 @@
     opacity: 0.45;
   }
   #chat-model-provider:not(:empty)::before { content: " · "; }
+  #chat-mode-badge:not(:empty)::before { content: " · "; }
 
 
 
@@ -1753,7 +1754,7 @@ body.mini:hover #mini-exit { opacity: 1; }
             <div id="chat-identity-text">
             <div id="chat-identity-name">UNIQUE SKILL: GREAT SAGE</div>
             <div id="chat-identity-model">
-              <span id="chat-model-name">-</span><span id="chat-model-provider"></span>
+              <span id="chat-model-name">-</span><span id="chat-model-provider"></span><span id="chat-mode-badge"></span>
             </div>
             <button id="ai-settings-btn" type="button"
                     title="AI settings - API keys, providers, permissions">&#9881;</button>
@@ -1774,6 +1775,12 @@ body.mini:hover #mini-exit { opacity: 1; }
             <p class="panel-note">Keys are stored on this machine only, in
                your user folder, and are never shown again once saved -
                only replaced.</p>
+
+            <div class="ai-set-group">
+              <label>Mode</label>
+              <select id="ai-mode"></select>
+              <span class="ai-set-hint" id="ai-mode-hint"></span>
+            </div>
 
             <div class="ai-set-group">
               <label>Chat provider</label>
@@ -5081,6 +5088,16 @@ const MINI_CHAT_PAD = 3;
         renderTopicList();
         saveChats();
       }
+    } else if (msg.type === 'mode') {
+      // GAMING and SLEEP hand the GPU back: the model unloads server
+      // side, and the scene steps down here. Without this half, the HUD
+      // would carry on spending the frames the mode just freed.
+      window.__modeFpsCap = msg.hud_fps || 0;
+      const badge = document.getElementById('chat-mode-badge');
+      if (badge) {
+        badge.textContent = msg.label || '';
+        badge.title = msg.description || '';
+      }
     } else if (msg.type === 'ai_settings') {
       renderAiSettings(msg.settings);
     } else if (msg.type === 'model_info') {
@@ -5935,7 +5952,9 @@ const MINI_CHAT_PAD = 3;
     // down further and gives the GPU back to the work being waited on.
     const _cap = miniMode
       ? (miniCfg.fpsCap || 30)
-      : (aiThinking ? BUSY_FPS_CAP : IDLE_FPS_CAP);
+      : (window.__modeFpsCap
+           ? window.__modeFpsCap                      // GAMING / SLEEP
+           : (aiThinking ? BUSY_FPS_CAP : IDLE_FPS_CAP));
     if (_cap && (_now - _lastFrameMs) < (1000 / _cap) - 1) {
       return;
     }
@@ -7970,6 +7989,27 @@ const MINI_CHAT_PAD = 3;
       });
       if (value) el.value = value;
     };
+    const modeSel = document.getElementById('ai-mode');
+    if (modeSel && cfg.modes) {
+      const same = modeSel.options.length === cfg.modes.length;
+      if (!same) {
+        modeSel.innerHTML = '';
+        cfg.modes.forEach((m) => {
+          const o = document.createElement('option');
+          o.value = m.name; o.textContent = m.label;
+          o.dataset.description = m.description || '';
+          modeSel.appendChild(o);
+        });
+      }
+      if (cfg.mode) modeSel.value = cfg.mode;
+      const hint = document.getElementById('ai-mode-hint');
+      const chosen = modeSel.selectedOptions[0];
+      if (hint && chosen) hint.textContent = chosen.dataset.description || '';
+      modeSel.onchange = () => {
+        const o = modeSel.selectedOptions[0];
+        if (hint && o) hint.textContent = o.dataset.description || '';
+      };
+    }
     fill('ai-chat-provider', cfg.providers, cfg.chat_provider);
     fill('ai-tts-provider', cfg.tts_providers, cfg.tts_provider);
     Object.keys(AI_KEY_FIELDS).forEach((name) => {
@@ -7996,6 +8036,7 @@ const MINI_CHAT_PAD = 3;
       const chk = (id) => !!(document.getElementById(id) || {}).checked;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'save_ai_settings', settings: {
+          mode: val('ai-mode'),
           chat_provider: val('ai-chat-provider'),
           tts_provider: val('ai-tts-provider'),
           allow_web: chk('ai-allow-web'),

@@ -41,6 +41,9 @@ DEFAULTS: Dict[str, Any] = {
     # reaches outside this machine.
     "allow_web": False,
     "allow_desktop": True,
+    # Spec S39. What Great Sage is allowed to SPEND right now, and where
+    # data may go. See core/modes.py.
+    "mode": "companion",
 }
 
 
@@ -113,6 +116,11 @@ def public_view(data: Dict[str, Any]) -> Dict[str, Any]:
     out["keys"] = {name: mask(val) for name, val in
                    (data.get("keys") or {}).items()}
     out["providers"] = list(PROVIDERS)
+    try:
+        from great_sage.core import modes as _modes
+        out["modes"] = _modes.public_list()
+    except Exception:
+        out["modes"] = []
     out["tts_providers"] = list(TTS_PROVIDERS)
     return out
 
@@ -125,7 +133,7 @@ def apply_update(data: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]
     would overwrite a real key with asterisks. Clearing is explicit, via
     clear_keys.
     """
-    for field in ("chat_provider", "chat_model", "tts_provider"):
+    for field in ("chat_provider", "chat_model", "tts_provider", "mode"):
         if field in update and isinstance(update[field], str):
             data[field] = update[field]
     for field in ("allow_web", "allow_desktop"):
@@ -145,6 +153,19 @@ def apply_update(data: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]
     return data
 
 
+def web_allowed(data) -> bool:
+    """The permission AND the mode both have to agree.
+
+    PRIVATE exists to be a single switch that guarantees nothing leaves
+    the machine (spec S66). If a checkbox left on could still let a tool
+    reach the network, the mode would be a label rather than a guarantee.
+    """
+    from great_sage.core import modes as _modes
+    if not (data or {}).get("allow_web"):
+        return False
+    return _modes.get((data or {}).get("mode")).allow_web
+
+
 def build_provider(data, fallback):
     """The provider these settings ask for, or `fallback` if unavailable.
 
@@ -155,6 +176,11 @@ def build_provider(data, fallback):
     setting did nothing.
     """
     want = (data or {}).get("chat_provider") or "local"
+    from great_sage.core import modes as _modes
+    if not _modes.get((data or {}).get("mode")).allow_online and want != "local":
+        log.info("PRIVATE mode: staying on the local model rather than %r",
+                 want)
+        return fallback, "Ollama / Local (private)"
     if want == "local":
         return fallback, "Ollama / Local"
     key = ((data or {}).get("keys") or {}).get(want, "").strip()

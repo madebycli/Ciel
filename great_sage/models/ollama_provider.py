@@ -43,6 +43,11 @@ class OllamaProvider(ModelProvider):
         # Deliberately above Ollama's 4096 default; see _needed_ctx. The
         # KV cache grows with this, so it is raised where it is needed
         # rather than pinned high for every request.
+        # How long Ollama keeps the model in VRAM after a reply.
+        # Ollama's own default is 5 minutes. GAMING and SLEEP set this to
+        # "0", which unloads it the moment the answer is finished and
+        # hands ~4GB straight back to whatever Krazaa is actually doing.
+        self.keep_alive = None
         self.base_num_ctx = 8192
         self.image_num_ctx = 16384
 
@@ -51,6 +56,8 @@ class OllamaProvider(ModelProvider):
         if self.think is not None:
             body["think"] = self.think
         body["options"] = {"num_ctx": self._needed_ctx(messages)}
+        if self.keep_alive is not None:
+            body["keep_alive"] = self.keep_alive
         return body
 
     def _needed_ctx(self, messages) -> int:
@@ -181,6 +188,20 @@ class OllamaProvider(ModelProvider):
                 detail = ""
         return ("Ollama returned an error (HTTP %s)%s"
                 % (status, ": " + detail if detail else "."))
+
+    def unload(self) -> bool:
+        """Drop the model from VRAM now, without waiting for a timeout.
+
+        A zero-token request with keep_alive 0 is Ollama's documented way
+        to do this; there is no explicit unload endpoint.
+        """
+        try:
+            requests.post(f"{self.host}/api/generate", timeout=30,
+                          json={"model": self.model, "keep_alive": 0})
+            return True
+        except Exception:
+            log.warning("Could not unload %s from VRAM", self.model)
+            return False
 
     def chat_raw(self, messages, tools=None):
         """One /api/chat round trip, returning Ollama's whole `message`.
