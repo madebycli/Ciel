@@ -59,7 +59,17 @@ _HRULE = re.compile(r"^[ \t]*(?:-{3,}|={3,}|\*{3,})[ \t]*$", re.M)
 # thirteen MINUTES of speech, during which the app is unusable and the
 # ack deadline is held open. Capping here bounds the damage regardless of
 # what the model does or which model it is.
-SPEECH_HARD_CAP_CHARS = 1500          # ~85 seconds of audio
+# Lowered from 1500 (~85 seconds) after Krazaa asked it to "not speak so
+# much". 1500 only ever caught a malfunction; it did nothing about an
+# ordinary reply that simply ran long, and a 500-character answer is over
+# half a minute of talking at someone.
+#
+# The prompt asks for one or two sentences and mostly complies, but "mostly"
+# is not a bound - measured replies still reached 498 characters. This is
+# the bound. It trims at a SENTENCE end, and only the SPOKEN copy is cut:
+# the full text still reaches the screen and the transcript, so nothing is
+# actually lost, it just is not read aloud.
+SPEECH_HARD_CAP_CHARS = 420           # ~30 seconds of audio
 
 # Below this, cutting at a sentence boundary would throw away too much, so
 # fall back to a word boundary instead.

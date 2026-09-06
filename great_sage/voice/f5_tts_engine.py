@@ -25,15 +25,20 @@ That flow-matching step count (NFE) is a direct speed/quality dial with
 no equivalent in an autoregressive model - see NFE_STEP below.
 """
 
+import logging
 import os
 import queue
 import threading
 from typing import Iterable, List, Optional, Set
 
+from great_sage.config import settings
+
 from great_sage.voice.audio_fx import VoiceFX
 from great_sage.voice.base import VoiceError, VoiceOutput
 from great_sage.voice.sinks import AudioSink, LocalSpeakerSink
 from great_sage.voice.voice_lines import VoiceLine, label_from_pattern, split_voice_lines
+
+log = logging.getLogger(__name__)
 
 # Flow-matching steps. Measured on the same 9.5s line: 8 -> 2.16s
 # (4.40x realtime), 16 -> 3.94s (2.41x), 32 -> 8.19s (1.16x). 8 was
@@ -175,6 +180,29 @@ def _describe_cause_chain(exc, limit=6):
         parts.append(f"{type(cur).__name__}: {cur}")
         cur = cur.__cause__ or cur.__context__
     return " <- ".join(parts)
+
+
+def _split_for_speech(text: str, target: int):
+    """Break text at sentence ends into pieces of roughly `target` chars.
+
+    Sentence boundaries specifically, not a fixed width: a cut mid-clause
+    is audible, because each piece is generated with its own intonation
+    and a sentence that starts mid-thought lands wrong.
+    """
+    import re
+    sentences = re.split(r"(?<=[.!?])\s+", (text or "").strip())
+    out, current = [], ""
+    for sentence in sentences:
+        if not sentence:
+            continue
+        if current and len(current) + 1 + len(sentence) > target:
+            out.append(current)
+            current = sentence
+        else:
+            current = (current + " " + sentence).strip()
+    if current:
+        out.append(current)
+    return out or [text]
 
 
 class F5TTSVoiceOutput(VoiceOutput):
@@ -349,21 +377,54 @@ class F5TTSVoiceOutput(VoiceOutput):
 
     # ---------- synthesis ----------
 
-    def generate(self, text: str):
-        """Synthesize one chunk. Returns (samples, sample_rate)."""
+    def _generate_once(self, text: str):
         ref_audio, ref_text = self._ref_cache
         try:
             wav, sample_rate, _ = self._infer_process(
                 ref_audio, ref_text, text,
                 self._api.ema_model, self._api.vocoder, self._api.mel_spec_type,
                 nfe_step=self._nfe_step,
+                speed=getattr(settings, "F5_SPEED", 1.0),
                 show_info=lambda *a, **k: None,
                 device=self._api.device,
             )
         except Exception as exc:
             raise VoiceError(f"F5-TTS synthesis failed: {exc}") from exc
+        return wav, sample_rate
 
-        return _pad_tail(wav, sample_rate), sample_rate
+    def generate(self, text: str):
+        """Synthesize one chunk. Returns (samples, sample_rate).
+
+        Long text is generated in SENTENCE-SIZED pieces and joined into a
+        single clip. F5 derives the duration of what it produces from the
+        ratio of the text length to the reference clip's, so asking one
+        generation to cover a long reply makes it compress - speech comes
+        out rushed and eventually slurs. Asking it to cover less per pass
+        is the fix; joining the pieces here keeps the promise that the
+        player receives ONE clip, with no seams to gap between.
+        """
+        import numpy as _np
+        threshold = getattr(settings, "F5_CHUNK_THRESHOLD_CHARS", 260)
+        pieces = (_split_for_speech(text,
+                                    getattr(settings, "F5_CHUNK_TARGET_CHARS", 220))
+                  if len(text) > threshold else [text])
+        if len(pieces) == 1:
+            wav, rate = self._generate_once(pieces[0])
+            return _pad_tail(wav, rate), rate
+
+        log.info("Long reply (%d chars): synthesizing in %d pieces",
+                 len(text), len(pieces))
+        chunks, rate = [], None
+        for piece in pieces:
+            wav, rate = self._generate_once(piece)
+            chunks.append(wav)
+        # A short silence between sentences, which is what a speaker would
+        # do anyway - and it hides any tiny discontinuity at the join.
+        gap = _np.zeros(int((rate or 24000) * 0.12), dtype=chunks[0].dtype)
+        joined = chunks[0]
+        for extra in chunks[1:]:
+            joined = _np.concatenate([joined, gap, extra])
+        return _pad_tail(joined, rate), rate
 
     def _speak_tts_segment(self, text: str) -> None:
         """Generate and play in a producer/consumer pair.
