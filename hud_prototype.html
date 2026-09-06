@@ -1852,7 +1852,15 @@ Hey Ciel</textarea>
   camera.position.set(0, 0, 10);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
+  // Cap the render resolution. devicePixelRatio on a scaled 1440p display
+  // is commonly 1.25-1.5, so rendering at it means up to 2.25x the pixels
+  // of the window for a scene whose lines and glow look the same either
+  // way. Those pixels are GPU the model and the voice both need - the HUD
+  // measured 42% GPU utilisation sitting completely idle.
+  //
+  // 1.25 keeps edges from looking soft on a high-DPI screen without
+  // paying for full supersampling.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.autoClear = false;
   wrap.appendChild(renderer.domElement);
@@ -5359,6 +5367,11 @@ const MINI_CHAT_PAD = 3;
   let micLevel = 0;
 
   let _lastFrameMs = performance.now();
+  // 60 is plenty for this scene; the extra frames on a high-refresh
+  // monitor cost the GPU that the model needs and change nothing visible.
+  const IDLE_FPS_CAP = 60;
+  const BUSY_FPS_CAP = 24;
+
   function animate() {
     requestAnimationFrame(animate);
     const _now = performance.now();
@@ -5366,8 +5379,19 @@ const MINI_CHAT_PAD = 3;
     // makes dt the time since the last RENDERED frame rather than since
     // the last rAF callback - so everything below still advances by real
     // elapsed time, just less often.
-    if (miniMode && miniCfg.fpsCap
-        && (_now - _lastFrameMs) < (1000 / miniCfg.fpsCap) - 1) {
+    // Frame cap, in BOTH modes now. The main window was uncapped, which
+    // on a 185Hz monitor meant 185fps of WebGL for a scene that looks
+    // identical at 60 - measured at 42% GPU utilisation while completely
+    // idle.
+    //
+    // That matters because the model, the voice and this scene share one
+    // 3060. During generation the GPU hit 94% average and 99% peak, and
+    // the HUD visibly froze. While Great Sage is thinking the scene steps
+    // down further and gives the GPU back to the work being waited on.
+    const _cap = miniMode
+      ? (miniCfg.fpsCap || 30)
+      : (aiThinking ? BUSY_FPS_CAP : IDLE_FPS_CAP);
+    if (_cap && (_now - _lastFrameMs) < (1000 / _cap) - 1) {
       return;
     }
     // Clamped: an alt-tabbed window resumes with a multi-second gap, and

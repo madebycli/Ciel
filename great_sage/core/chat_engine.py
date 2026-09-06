@@ -146,3 +146,51 @@ class ChatEngine:
         self.history = [system]
         self._last_activity = None
         self._boundary_start_index = 1
+
+    def send_with_tools(self, user_input, tools_schema, run_tool,
+                        max_rounds=3):
+        """Send a message the model may answer by CALLING something.
+
+        Returns (reply_text, [(tool_name, result_or_error), ...]).
+
+        The loop is bounded. A model that keeps asking for the same tool -
+        or chains one call into another indefinitely - would otherwise
+        spin, and each round is a real round trip plus a real action on
+        the user's machine.
+
+        A tool that raises is reported back to the model as its result
+        rather than aborting: the model then tells the user what failed,
+        in character, instead of the reply vanishing into an exception.
+        That is spec S16 - never claim an action occurred unless it did.
+        """
+        outgoing = self._build_outgoing(user_input)
+        used = []
+        try:
+            for _round in range(max_rounds):
+                message = self.provider.chat_raw(outgoing, tools=tools_schema)
+                calls = message.get("tool_calls") or []
+                if not calls:
+                    reply = message.get("content") or ""
+                    self.history.append({"role": "assistant", "content": reply})
+                    return reply, used
+                # Record the assistant turn that requested the calls, or
+                # the follow-up loses the thread of what it asked for.
+                outgoing.append(message)
+                for call in calls:
+                    fn = call.get("function") or {}
+                    name = fn.get("name") or "?"
+                    try:
+                        result = run_tool(name, fn.get("arguments"))
+                    except Exception as exc:
+                        result = "FAILED: %s" % exc
+                    used.append((name, result))
+                    outgoing.append({"role": "tool", "content": str(result),
+                                     "tool_name": name})
+            # Out of rounds: answer with what the tools returned rather
+            # than looping forever.
+            reply = message.get("content") or ""
+            self.history.append({"role": "assistant", "content": reply})
+            return reply, used
+        except ModelProviderError:
+            self.history.pop()      # no unanswered user turn left behind
+            raise

@@ -144,3 +144,34 @@ class OllamaProvider(ModelProvider):
                 "Try `ollama pull <model-name>`."
             )
         return f"Ollama returned an error (HTTP {status})."
+
+    def chat_raw(self, messages, tools=None):
+        """One /api/chat round trip, returning Ollama's whole `message`.
+
+        send_message() returns only the text, which is enough for
+        conversation but throws away tool_calls - the field the tool layer
+        exists to read. This returns the message dict untouched so the
+        caller can see both.
+        """
+        body = self._payload(messages, stream=False)
+        if tools:
+            body["tools"] = tools
+        try:
+            response = requests.post(f"{self.host}/api/chat", json=body,
+                                     timeout=self.timeout)
+            response.raise_for_status()
+        except requests.exceptions.ConnectionError as exc:
+            raise ModelProviderError(
+                f"Could not connect to Ollama at {self.host}. "
+                "Is Ollama running? (try `ollama serve`)"
+            ) from exc
+        except requests.exceptions.Timeout as exc:
+            raise ModelProviderError(
+                f"Ollama did not respond within {self.timeout}s.") from exc
+        except requests.exceptions.HTTPError as exc:
+            raise ModelProviderError(self._describe_http_error(exc)) from exc
+        try:
+            return response.json()["message"]
+        except (ValueError, KeyError) as exc:
+            raise ModelProviderError(
+                "Ollama returned an unexpected response format.") from exc

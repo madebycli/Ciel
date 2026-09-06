@@ -162,6 +162,7 @@ import websockets
 
 from great_sage.config import settings
 from great_sage.core import (chat_store, guardrails, hud_settings, memory,
+                             tools as tool_layer,
                              personality,
                              voice_line_prefs)
 from great_sage.core.metrics import ResponseTimer
@@ -509,12 +510,32 @@ def _handle_chat(text, engine, voice, sink, websocket, loop,
             speaker = threading.Thread(target=speak_worker, daemon=True)
             speaker.start()
         reply_chunks = []
-        for chunk in engine.send_streaming(text):
+        used_tools = []
+        if (getattr(settings, "TOOLS_ENABLED", True)
+                and tool_layer.might_need_tools(text)):
+            # Tool-capable turns are NOT streamed. Ollama reports
+            # tool_calls only on a complete message, so the call has to
+            # finish before it is known whether one was requested at all.
+            # No real loss: VOICE_SINGLE_SHOT means speech waits for the
+            # whole reply anyway, and captions follow the audio.
+            reply, used_tools = engine.send_with_tools(
+                text, tool_layer.ollama_schema(), tool_layer.execute)
+            for name, result in used_tools:
+                log.info("Tool %s -> %s", name, str(result)[:120])
+                send({"type": "tool_used", "name": name,
+                      "result": str(result)[:400]})
             timer.first_token()
-            reply_chunks.append(chunk)
-            send({"type": "reply_chunk", "text": chunk})
+            reply_chunks.append(reply)
+            send({"type": "reply_chunk", "text": reply})
             if speaker is not None:
-                text_q.put(chunk)
+                text_q.put(reply)
+        else:
+          for chunk in engine.send_streaming(text):
+              timer.first_token()
+              reply_chunks.append(chunk)
+              send({"type": "reply_chunk", "text": chunk})
+              if speaker is not None:
+                  text_q.put(chunk)
         timer.text_done()
         # Guardrails run HERE: the full reply exists, but nothing has been
         # displayed or spoken yet. With captionFollowsSpeech the HUD holds
