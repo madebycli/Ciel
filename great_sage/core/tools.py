@@ -619,3 +619,51 @@ _TRIGGERS = _TRIGGERS + (
     # reading the answer and making one up.
     "app ", "program", "window", "am i in", "am i using", "right now",
 )
+
+
+# ---------------------------------------------------------------------
+# Deterministic pre-routing.
+#
+# Whether a 4B model decides to CALL a tool is close to a coin flip.
+# Measured on "What time is it?" with the tool schema attached: four runs
+# in a row invented a time and never called get_time, then two runs in a
+# row called it correctly. Same prompt, same model, same question.
+#
+# Prompting harder does not fix a sampling problem, and the failure is
+# the worst kind - a confident wrong answer rather than an error. Spec
+# S16 says it outright: "Prefer deterministic APIs for deterministic
+# tasks." So for phrasings where the intent is unambiguous, the tool is
+# run FIRST and its result handed to the model, which is then only asked
+# to phrase it.
+#
+# Deliberately narrow. These patterns have exactly one sensible reading;
+# anything less certain is still left to the model to decide, because a
+# tool run on a guess is worse than one not run at all.
+# ---------------------------------------------------------------------
+
+import re as _re
+
+_PREROUTE = (
+    (_re.compile(r"\b(what|whats|what's)\s+(the\s+)?(time|date)\b|"
+                 r"\bwhat\s+day\s+is\s+it\b|\btime\s+is\s+it\b", _re.I),
+     "get_time", {}),
+    (_re.compile(r"\b(how much|whats|what's|check)\s+.{0,20}"
+                 r"(vram|gpu memory|disk space|free space|storage)\b", _re.I),
+     "get_system_status", {}),
+    (_re.compile(r"\b(what|which)\s+(app|application|program|window)\s+"
+                 r"(am\s+i|is)\b|\bwhat\s+am\s+i\s+(in|using)\b", _re.I),
+     "get_focused_window", {}),
+    (_re.compile(r"\b(look at|check|read)\s+(my\s+)?screen\b|"
+                 r"\bwhats?\s+on\s+(my\s+)?screen\b|"
+                 r"\bwhat\s+(do\s+you\s+)?see\b", _re.I),
+     "look_at_screen", {}),
+)
+
+
+def preroute(text: str):
+    """[(tool_name, args)] to run before asking the model, or []."""
+    out = []
+    for pattern, name, args in _PREROUTE:
+        if pattern.search(text or ""):
+            out.append((name, dict(args)))
+    return out

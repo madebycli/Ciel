@@ -622,9 +622,28 @@ def _handle_chat(text, engine, voice, sink, websocket, loop,
             # finish before it is known whether one was requested at all.
             # No real loss: VOICE_SINGLE_SHOT means speech waits for the
             # whole reply anyway, and captions follow the audio.
+            # Run the unambiguous tools ourselves first. Whether a 4B
+            # model chooses to call one is close to a coin flip, and the
+            # failure mode is a confident wrong answer - it invented four
+            # different times in four runs. Spec S16: deterministic APIs
+            # for deterministic tasks.
+            pre_results = []
+            for _name, _args in tool_layer.preroute(text):
+                try:
+                    _res = tool_layer.execute(_name, _args)
+                except Exception as _exc:
+                    _res = "FAILED: %s" % _exc
+                pre_results.append((_name, _res))
+                log.info("Pre-routed tool %s -> %s", _name, str(_res)[:100])
+                send({"type": "tool_used", "name": _name,
+                      "result": str(_res)[:400]})
+            pre_images = tool_layer.take_pending_images() if pre_results else []
             reply, used_tools = engine.send_with_tools(
                 text, tool_layer.ollama_schema(), tool_layer.execute,
-                collect_images=tool_layer.take_pending_images)
+                collect_images=tool_layer.take_pending_images,
+                preroute_results=pre_results, preroute_images=pre_images)
+            used_tools = [u for u in used_tools
+                          if u[0] not in {n for n, _ in pre_results}] 
             for name, result in used_tools:
                 log.info("Tool %s -> %s", name, str(result)[:120])
                 send({"type": "tool_used", "name": name,

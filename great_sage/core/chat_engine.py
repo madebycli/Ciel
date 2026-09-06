@@ -160,7 +160,8 @@ class ChatEngine:
         self._boundary_start_index = 1
 
     def send_with_tools(self, user_input, tools_schema, run_tool,
-                        max_rounds=3, collect_images=None):
+                        max_rounds=3, collect_images=None,
+                        preroute_results=None, preroute_images=None):
         """Send a message the model may answer by CALLING something.
 
         Returns (reply_text, [(tool_name, result_or_error), ...]).
@@ -177,6 +178,18 @@ class ChatEngine:
         """
         outgoing = self._build_outgoing(user_input)
         used = []
+        # Tools the caller has already decided must run - see
+        # tools.preroute. Their results go in BEFORE the model is asked
+        # anything, so a question with one sensible reading is answered
+        # from fact rather than from whether the model felt like calling
+        # something this time.
+        for name, result in (preroute_results or []):
+            used.append((name, result))
+            outgoing.append({"role": "tool", "content": str(result),
+                             "tool_name": name})
+        if preroute_images:
+            outgoing.append({"role": "user", "content": "(the screen)",
+                             "images": list(preroute_images)})
         try:
             for _round in range(max_rounds):
                 message = self.provider.chat_raw(outgoing, tools=tools_schema)
