@@ -192,6 +192,53 @@
      single letter" fault. */
   #center-panel #memory-list .memory-del { width: 20px; }
 
+  /* In-page dialogs. WebView2 does not reliably show window.confirm /
+     prompt / alert - an embedded webview may suppress them and return
+     false immediately, which is why Delete appeared to do nothing in the
+     app while working in a browser. These also let the dialogs match
+     Great Sage rather than look like an OS box. */
+  #gs-dialog-backdrop {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(0,0,0,0.66);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #gs-dialog {
+    min-width: 300px; max-width: 460px;
+    background: rgba(6,12,10,0.98);
+    border: 1px solid rgba(255,255,255,0.32);
+    padding: 16px 18px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.7);
+  }
+  #gs-dialog .gs-dialog-msg {
+    color: #e6f0f8; font-size: 12px; line-height: 1.6;
+    letter-spacing: 0.05em; white-space: pre-wrap;
+  }
+  #gs-dialog input {
+    width: 100%; box-sizing: border-box; margin-top: 12px;
+    padding: 7px 9px; background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.28);
+    color: #e8f2ff; font: inherit; letter-spacing: 0.04em;
+  }
+  #gs-dialog input:focus { outline: none; border-color: rgba(255,255,255,0.6); }
+  #gs-dialog .gs-dialog-actions {
+    display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px;
+  }
+  #gs-dialog .gs-dialog-actions button {
+    width: auto; padding: 5px 14px;
+    background: none; border: 1px solid rgba(255,255,255,0.28);
+    color: rgba(232,242,255,0.85); cursor: pointer;
+    font: inherit; font-size: 10px; letter-spacing: 0.14em;
+  }
+  #gs-dialog .gs-dialog-actions button:hover {
+    color: #fff; border-color: rgba(255,255,255,0.65);
+  }
+  #gs-dialog .gs-dialog-actions button.danger {
+    color: rgba(255,170,170,0.9); border-color: rgba(255,130,130,0.4);
+  }
+  #gs-dialog .gs-dialog-actions button.danger:hover {
+    background: rgba(255,110,110,0.18); color: #fff;
+  }
+
   #chat-attach {
     flex: 0 0 auto; width: 26px; height: 26px; line-height: 24px;
     padding: 0; background: none;
@@ -4879,7 +4926,7 @@ const MINI_CHAT_PAD = 3;
         t.summary = msg.text;
         saveChats();
       }
-      if (msg.text) window.alert(msg.text);
+      if (msg.text) gsNotice(msg.text);
     } else if (msg.type === 'chat_title') {
       const t = chatTopics.find((c) => c.id === msg.id);
       // Only if the user has not renamed it themselves in the meantime.
@@ -7567,6 +7614,73 @@ const MINI_CHAT_PAD = 3;
     return chatTopics.find((t) => t.id === activeTopicId);
   }
 
+  // ---------- In-page dialogs ----------
+  // WebView2 does not reliably show window.confirm / prompt / alert. An
+  // embedded webview can suppress them and return false immediately,
+  // which is exactly how Delete behaved: nothing happened in the app,
+  // while the identical code deleted correctly in a browser. Rename had
+  // the same fault, silently.
+  //
+  // Promise-based, so the call sites read the way the blocking built-ins
+  // did, and styled to match Great Sage rather than the OS.
+  function gsDialog(opts) {
+    return new Promise((resolve) => {
+      const back = document.createElement('div');
+      back.id = 'gs-dialog-backdrop';
+      const box = document.createElement('div');
+      box.id = 'gs-dialog';
+      const msg = document.createElement('div');
+      msg.className = 'gs-dialog-msg';
+      msg.textContent = opts.message || '';
+      box.appendChild(msg);
+
+      let input = null;
+      if (opts.prompt) {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.value = opts.value || '';
+        box.appendChild(input);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'gs-dialog-actions';
+      const done = (val) => { back.remove(); resolve(val); };
+
+      if (opts.cancelLabel !== null) {
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = opts.cancelLabel || 'CANCEL';
+        cancel.addEventListener('click', () => done(opts.prompt ? null : false));
+        actions.appendChild(cancel);
+      }
+      const ok = document.createElement('button');
+      ok.type = 'button';
+      ok.textContent = opts.okLabel || 'OK';
+      if (opts.danger) ok.className = 'danger';
+      ok.addEventListener('click',
+        () => done(opts.prompt ? (input ? input.value : '') : true));
+      actions.appendChild(ok);
+      box.appendChild(actions);
+
+      back.addEventListener('click', (e) => {
+        if (e.target === back) done(opts.prompt ? null : false);
+      });
+      back.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') ok.click();
+        if (e.key === 'Escape') done(opts.prompt ? null : false);
+      });
+      back.appendChild(box);
+      document.body.appendChild(back);
+      if (input) { input.focus(); input.select(); } else { ok.focus(); }
+    });
+  }
+  const gsConfirm = (message, okLabel) =>
+    gsDialog({ message, okLabel: okLabel || 'CONFIRM', danger: true });
+  const gsPrompt = (message, value) =>
+    gsDialog({ message, value, prompt: true, okLabel: 'SAVE' });
+  const gsNotice = (message) =>
+    gsDialog({ message, okLabel: 'CLOSE', cancelLabel: null });
+
   // ---------- Chat workspace: transcript <-> memory ----------
   // One backend, two views. Selecting Memory swaps what the main column
   // shows; it does NOT load a second copy of anything - memoryFacts is
@@ -7654,11 +7768,12 @@ const MINI_CHAT_PAD = 3;
   if (memorySearchEl) memorySearchEl.addEventListener('input', renderMemory);
   const memoryClearBtn = document.getElementById('memory-clear-btn');
   if (memoryClearBtn) {
-    memoryClearBtn.addEventListener('click', () => {
+    memoryClearBtn.addEventListener('click', async () => {
       if (!memoryFacts.length) return;
-      if (!window.confirm('Forget everything Great Sage has remembered?' +
-          String.fromCharCode(10) + String.fromCharCode(10) +
-          memoryFacts.length + ' memories will be deleted. This cannot be undone.')) return;
+      const ok = await gsConfirm('Forget everything Great Sage has remembered?' +
+        String.fromCharCode(10) + String.fromCharCode(10) +
+        memoryFacts.length + ' memories will be deleted. This cannot be undone.', 'FORGET ALL');
+      if (!ok) return;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'clear_memory' }));
       }
@@ -7726,8 +7841,8 @@ const MINI_CHAT_PAD = 3;
       menu.appendChild(b);
     };
 
-    item('Rename', false, () => {
-      const name = window.prompt('Rename this chat:', topic.title);
+    item('Rename', false, async () => {
+      const name = await gsPrompt('Rename this chat:', topic.title);
       if (name === null) return;                 // cancelled
       const clean = name.trim();
       if (!clean) return;
@@ -7742,10 +7857,13 @@ const MINI_CHAT_PAD = 3;
     item('Remember this chat', false,
          () => requestChatAction('remember_chat', topic));
 
-    item('Delete', true, () => {
+    item('Delete', true, async () => {
       // Spec S7: deletion needs a second confirmation.
-      if (!window.confirm('Delete this conversation?\n\n"' + topic.title +
-                          '"\n\nThis cannot be undone.')) return;
+      const ok = await gsConfirm('Delete this conversation?' +
+        String.fromCharCode(10) + String.fromCharCode(10) + topic.title +
+        String.fromCharCode(10) + String.fromCharCode(10) +
+        'This cannot be undone.', 'DELETE');
+      if (!ok) return;
       const wasActive = topic.id === activeTopicId;
       chatTopics.splice(chatTopics.indexOf(topic), 1);
       if (wasActive) {
