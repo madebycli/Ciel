@@ -526,6 +526,11 @@ CHAT_STORE_PATH = _user_file("chats.json")
 # tightened to the current user. See core/ai_settings.py.
 AI_SETTINGS_PATH = _user_file("ai_settings.json")
 
+# Reminders and folder watches (spec S63). User data, so it lives with
+# the memory and chats rather than in the bundle - a reminder that
+# vanished on update would be worse than one never set.
+TASKS_PATH = _user_file("tasks.json")
+
 # A hotkey that works from ANY window, so Great Sage can be spoken to
 # while a game or another application has focus (spec S40). Press once
 # to start listening, press again to send - a toggle rather than

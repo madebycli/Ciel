@@ -62,3 +62,6 @@ chats.json
 
 # API keys - never commit these.
 ai_settings.json
+
+# Scheduled reminders and folder watches - personal.
+tasks.json

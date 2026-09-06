@@ -657,6 +657,11 @@ _PREROUTE = (
                  r"\bwhats?\s+on\s+(my\s+)?screen\b|"
                  r"\bwhat\s+(do\s+you\s+)?see\b", _re.I),
      "look_at_screen", {}),
+    (_re.compile(r"\bwhat\s+(have\s+i|do\s+i\s+have|is)\s+.{0,12}"
+                 r"(scheduled|planned|coming up)\b|"
+                 r"\b(list|show)\s+(my\s+)?(reminders|tasks|schedule)\b|"
+                 r"\bwhat\s+reminders\b", _re.I),
+     "list_tasks", {}),
 )
 
 
@@ -667,3 +672,138 @@ def preroute(text: str):
         if pattern.search(text or ""):
             out.append((name, dict(args)))
     return out
+
+
+# ---------------------------------------------------------------------
+# Autonomy (spec S63, Phase 16). The Autonomy instance is owned by the
+# server and set here at startup, because the tools need to reach the same
+# one that is actually running the timer.
+# ---------------------------------------------------------------------
+
+_AUTONOMY = None
+
+
+def set_autonomy(instance):
+    global _AUTONOMY
+    _AUTONOMY = instance
+
+
+def _require_autonomy():
+    if _AUTONOMY is None:
+        raise ToolError("Scheduling is not available in this session.")
+    return _AUTONOMY
+
+
+def _parse_delay(when: str) -> float:
+    """'20 minutes', '2h', 'in 90 seconds' -> seconds.
+
+    Deliberately relative only. An absolute "7 PM" needs today/tomorrow,
+    the local timezone and a rollover rule, and getting any of those
+    subtly wrong produces a reminder that fires at the wrong time - which
+    is worse than one that was refused.
+    """
+    import re
+    text = (when or "").strip().lower()
+    # Plural forms must be allowed: requiring a word boundary right
+    # after "minute" made "20 minutes" fail, because the following
+    # "s" is not a boundary. Longest alternatives first, so "min"
+    # cannot swallow the start of "minute".
+    m = re.search(r"(\d+(?:\.\d+)?)\s*"
+                  r"(seconds|second|secs|sec|minutes|minute|mins|min|"
+                  r"hours|hour|hrs|hr|days|day|[smhd])\b", text)
+    if not m:
+        raise ToolError(
+            "Say how long from now, for example '20 minutes' or '2 hours'.")
+    n = float(m.group(1))
+    unit = m.group(2)
+    unit = unit.rstrip("s") if unit not in ("s",) else unit
+    mult = {"second": 1, "sec": 1, "s": 1,
+            "minute": 60, "min": 60, "m": 60,
+            "hour": 3600, "hr": 3600, "h": 3600,
+            "day": 86400, "d": 86400}[unit]
+    return n * mult
+
+
+def _set_reminder(message: str, when: str) -> str:
+    a = _require_autonomy()
+    seconds = _parse_delay(when)
+    t = a.remind(message, seconds)
+    import time as _t
+    return ("Reminder set for %s: %s"
+            % (_t.strftime("%H:%M", _t.localtime(t.due)), message))
+
+
+def _watch_folder(path: str, message: str = "") -> str:
+    a = _require_autonomy()
+    try:
+        t = a.watch_folder(path, message)
+    except ValueError:
+        # Same leniency as open_folder: a model asked to watch "my
+        # renders" produces a name, not a path.
+        import os as _os
+        leaf = _os.path.basename(str(path).rstrip("/" + chr(92))) or str(path)
+        candidate = _os.path.join(_os.path.expanduser("~"), leaf)
+        if not _os.path.isdir(candidate):
+            raise ToolError("No folder called %r was found." % leaf)
+        t = a.watch_folder(candidate, message)
+    return "Watching %s - I will say when it changes." % t.path
+
+
+def _list_tasks() -> str:
+    a = _require_autonomy()
+    import time as _t
+    rows = []
+    for t in a.pending():
+        if t.kind == "remind":
+            rows.append("%s - reminder at %s: %s"
+                        % (t.id, _t.strftime("%H:%M", _t.localtime(t.due)),
+                           t.message))
+        else:
+            rows.append("%s - watching %s" % (t.id, t.path))
+    return chr(10).join(rows) if rows else "Nothing scheduled."
+
+
+def _cancel_task(task_id: str) -> str:
+    a = _require_autonomy()
+    return ("Cancelled %s." % task_id if a.cancel(task_id)
+            else "No task with id %r." % task_id)
+
+
+REGISTRY.append(Tool(
+    "set_reminder",
+    "Remind the user about something after a delay. Use when they ask to "
+    "be reminded, or to be told when a time has passed.",
+    {"type": "object",
+     "properties": {"message": {"type": "string"},
+                    "when": {"type": "string",
+                             "description": "Delay from now, e.g. '20 minutes'"}},
+     "required": ["message", "when"]},
+    _set_reminder, SAFE))
+
+REGISTRY.append(Tool(
+    "watch_folder",
+    "Watch a folder and tell the user when a file appears or changes - for "
+    "example a render finishing.",
+    {"type": "object",
+     "properties": {"path": {"type": "string"},
+                    "message": {"type": "string"}},
+     "required": ["path"]},
+    _watch_folder, SAFE))
+
+REGISTRY.append(Tool(
+    "list_tasks", "List reminders and folder watches currently scheduled.",
+    {"type": "object", "properties": {}}, _list_tasks, SAFE))
+
+REGISTRY.append(Tool(
+    "cancel_task", "Cancel a scheduled reminder or folder watch by its id.",
+    {"type": "object",
+     "properties": {"task_id": {"type": "string"}},
+     "required": ["task_id"]},
+    _cancel_task, SAFE))
+
+BY_NAME = {t.name: t for t in REGISTRY}
+_TRIGGERS = _TRIGGERS + (
+    "remind", "reminder", "in an hour", "in a minute", "later",
+    "watch my", "watch the", "tell me when", "let me know when",
+    "scheduled", "cancel",
+)

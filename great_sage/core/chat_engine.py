@@ -100,6 +100,15 @@ class ChatEngine:
                 outgoing.insert(len(outgoing) - 1,
                                 {"role": "system", "content": block})
 
+        # A line about how to PITCH this reply, from core/state.py. Set on
+        # the engine per turn rather than baked into the persona, because
+        # it is about the last few minutes and must not accumulate. Not
+        # written to history for the same reason.
+        hint = getattr(self, "state_hint", "")
+        if hint:
+            outgoing.insert(len(outgoing) - 1,
+                            {"role": "system", "content": hint})
+
         # Attached images ride on the user's own turn, which is the
         # shape Ollama expects. They are deliberately NOT written to
         # self.history: a base64 image re-sent on every subsequent

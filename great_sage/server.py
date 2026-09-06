@@ -162,6 +162,7 @@ import websockets
 
 from great_sage.config import settings
 from great_sage.core import (ai_settings, chat_store, guardrails, modes,
+                             state as sage_state,
                              hud_settings, memory,
                              tools as tool_layer,
                              personality,
@@ -586,6 +587,22 @@ def _handle_chat(text, engine, voice, sink, websocket, loop,
 
     timer = ResponseTimer(text[:48])
 
+    # Internal state (spec S80). Great Sage never sees these numbers - it
+    # receives at most one line about how to pitch this reply.
+    st = getattr(engine, "sage_state", None)
+    if st is not None:
+        sage_state.on_user_message(st, text)
+        # A push-back means the last answer missed. Detected from the
+        # opening of the message, where a correction actually appears -
+        # matching "no" anywhere would fire on every sentence containing
+        # the word.
+        low = (text or "").strip().lower()
+        if low.startswith(("no,", "no ", "nope", "wrong", "that's wrong",
+                           "thats wrong", "i meant", "i mean ", "not that",
+                           "actually,")):
+            sage_state.on_correction(st)
+        engine.state_hint = st.reply_hint()
+
     # Explicit "remember this" / "forget that" is acted on BEFORE the
     # model is called, so the fact is already stored when recall runs for
     # this same turn - ask it to remember something and it can use it
@@ -719,6 +736,9 @@ def _handle_chat(text, engine, voice, sink, websocket, loop,
             # slipped through would sit in history proving to the model that
             # it already broke character once.
             engine.replace_last_reply(guarded)
+        if st is not None:
+            sage_state.on_reply(st, guarded, bool(used_tools))
+            log.debug("State: %s", st.snapshot())
         # `text` carries the FINAL reply so the HUD's transcript records what
         # was actually delivered, not the discarded draft it streamed.
         send({"type": "reply_done", "text": guarded})
@@ -875,6 +895,47 @@ async def run_server(engine, voice) -> None:
             )
         except websockets.exceptions.ConnectionClosed:
             pass
+
+    engine.sage_state = sage_state.SageState()
+
+    # ---- Autonomy (spec S63) ----
+    # A fired task is SPOKEN through the normal reply path rather than
+    # pushed as a notification, so it arrives in Great Sage's voice, in
+    # the transcript, with the same guardrails as anything else.
+    def _may_interrupt():
+        mode = modes.get(
+            ai_settings.load(settings.AI_SETTINGS_PATH).get("mode"))
+        if not mode.wake_word:
+            return False          # GAMING / SLEEP: do not interrupt
+        st = getattr(engine, "sage_state", None)
+        return not (st is not None and st.should_stay_quiet())
+
+    def _on_task_fired(task):
+        conn = active_connection.get("websocket")
+        if conn is None:
+            return                 # nobody listening; it stays pending
+        if task.kind == "remind":
+            prompt = ("[REMINDER DUE] Tell Master, in one sentence, that it "
+                      "is time for: " + task.message)
+        else:
+            prompt = ("[FOLDER CHANGED] The folder %s has changed. Tell "
+                      "Master in one sentence. %s"
+                      % (task.path, task.message or ""))
+        log.info("Task fired: %s", task.kind)
+        _start_chat_thread(prompt, engine, voice,
+                           active_connection.get("sink"), conn, loop)
+
+    try:
+        from great_sage.core.autonomy import Autonomy
+        _tasks = Autonomy(settings.TASKS_PATH, on_fire=_on_task_fired,
+                          may_speak=_may_interrupt)
+        _tasks.start()
+        tool_layer.set_autonomy(_tasks)
+        log.info("Autonomy running (%d task(s) restored)", len(_tasks.tasks))
+    except Exception:
+        log.exception("Autonomy unavailable")
+
+    engine.state_hint = ""
 
     ptt_recorder = PushToTalkRecorder(on_result=_route_voice_text, on_level=_send_mic_level)
 
