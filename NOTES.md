@@ -880,3 +880,60 @@ tool stays a plain name -> string.
 
 One shot on purpose: a pending screenshot would otherwise be re-sent with
 a later, unrelated question.
+
+---
+
+## Global hotkey, and what can and cannot reduce VRAM
+
+### Ctrl+Alt+S from any window
+
+`core/global_hotkey.py`. Press to start listening, press again to send.
+Works while a game or another application has focus, which is the point -
+a keybind that needs the window focused first is no use for talking to
+Great Sage mid-game.
+
+A TOGGLE rather than hold-to-talk, and that follows from the mechanism:
+`RegisterHotKey` reports the press but not the release. The alternative,
+a `WH_KEYBOARD_LL` hook, would give both - and would also mean a callback
+on every keystroke the machine receives, system-wide, which is a
+performance tax and indistinguishable from a keylogger to any anti-cheat.
+Krazaa games. Not worth it for hold-to-talk.
+
+Verified by focusing a different window and sending the combination at
+the OS level: the app logged listening -> stop -> transcription without
+ever being focused.
+
+### VRAM: what was measured, and what is left
+
+Model residency, by context size:
+
+| num_ctx | VRAM |
+|---|---|
+| 2048 | 3059 MB |
+| 4096 | 3128 MB |
+| 8192 | 3342 MB (what normal replies use) |
+| 16384 | 3627 MB (only when an image is attached) |
+
+So the context is worth a few hundred MB and the WEIGHTS are the other
+three gigabytes. The model is already `Q4_K_M` at 4.7B parameters -
+quantising further is the only way to shrink the weights, and it costs
+quality.
+
+What was done instead:
+
+- `OLLAMA_KEEP_ALIVE_SECONDS = 120`, down from Ollama's default of 300.
+  Replies within two minutes of each other pay nothing; the card comes
+  back much sooner once the conversation stops.
+- GAMING and SLEEP set it to 0 and unload immediately - measured at 3954
+  to 4189 MB handed back on the switch.
+
+**Still available, but it is an Ollama SERVER setting rather than
+anything this app controls.** Flash attention and a quantised KV cache
+cut attention memory further:
+
+    setx OLLAMA_FLASH_ATTENTION 1
+    setx OLLAMA_KV_CACHE_TYPE q8_0
+
+Then restart Ollama. Deliberately NOT applied automatically: it changes
+Ollama's behaviour for every application on the machine, not just Great
+Sage, and that is the user's decision to make.

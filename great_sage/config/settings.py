@@ -526,6 +526,29 @@ CHAT_STORE_PATH = _user_file("chats.json")
 # tightened to the current user. See core/ai_settings.py.
 AI_SETTINGS_PATH = _user_file("ai_settings.json")
 
+# A hotkey that works from ANY window, so Great Sage can be spoken to
+# while a game or another application has focus (spec S40). Press once
+# to start listening, press again to send - a toggle rather than
+# hold-to-talk, because Windows reports the press but not the release
+# for a registered hotkey. See core/global_hotkey.py for why a
+# system-wide keyboard hook was deliberately NOT used.
+#
+# Set to "" to switch it off.
+GLOBAL_HOTKEY = os.environ.get("GREAT_SAGE_HOTKEY", "ctrl+alt+s")
+
+# How long Ollama holds the model in VRAM after a reply, in seconds.
+#
+# Ollama defaults to 300 (five minutes). Measured here, the model is
+# 3.0-3.6GB depending on context size, so five minutes of idle residency
+# is five minutes of a game not having that memory. 120 keeps it warm
+# across a normal back-and-forth - replies inside two minutes of each
+# other pay nothing - while giving the card back much sooner once the
+# conversation stops.
+#
+# GAMING and SLEEP override this with 0 (unload immediately); see
+# core/modes.py. Set to None to use Ollama own default.
+OLLAMA_KEEP_ALIVE_SECONDS = 120
+
 # The tool layer (spec S23-S26): let Great Sage read the clock, check
 # the machine, open links, launch installed applications and find files.
 #

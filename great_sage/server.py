@@ -832,6 +832,45 @@ async def run_server(engine, voice) -> None:
 
     ptt_recorder = PushToTalkRecorder(on_result=_route_voice_text, on_level=_send_mic_level)
 
+    # The global hotkey drives the SAME recorder the button does, so a
+    # voice message started from another window goes down the identical
+    # path - transcription, memory, tools, reply, speech - with nothing
+    # special-cased for it.
+    _hotkey_listening = {"on": False}
+
+    def _toggle_hotkey_listen():
+        mode = modes.get(
+            ai_settings.load(settings.AI_SETTINGS_PATH).get("mode"))
+        if _hotkey_listening["on"]:
+            _hotkey_listening["on"] = False
+            log.info("Global hotkey: stop listening")
+            threading.Thread(
+                target=_log_exceptions(ptt_recorder.stop,
+                                       "hotkey transcription"),
+                daemon=True).start()
+        else:
+            # SLEEP is meant to do nothing until spoken to first, and this
+            # IS speaking to it - so the hotkey works in every mode. That
+            # is the point of S40: a way back in when everything else is
+            # wound down.
+            _hotkey_listening["on"] = True
+            log.info("Global hotkey: listening (mode %s)", mode.label)
+            try:
+                ptt_recorder.start()
+            except Exception:
+                _hotkey_listening["on"] = False
+                log.exception("Could not start recording from the hotkey")
+
+    _hotkey = None
+    if getattr(settings, "GLOBAL_HOTKEY", ""):
+        try:
+            from great_sage.core.global_hotkey import GlobalHotkey
+            _hotkey = GlobalHotkey(settings.GLOBAL_HOTKEY,
+                                   _toggle_hotkey_listen)
+            _hotkey.start()
+        except Exception:
+            log.exception("Global hotkey unavailable")
+
     def _get_wake_phrases():
         saved = hud_settings.load(settings.HUD_SETTINGS_PATH)
         phrases = saved.get("wake_words")

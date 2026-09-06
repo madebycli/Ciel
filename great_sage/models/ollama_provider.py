@@ -47,7 +47,13 @@ class OllamaProvider(ModelProvider):
         # Ollama's own default is 5 minutes. GAMING and SLEEP set this to
         # "0", which unloads it the moment the answer is finished and
         # hands ~4GB straight back to whatever Krazaa is actually doing.
-        self.keep_alive = None
+        # Seconds Ollama holds the model in VRAM after a reply. Modes
+        # override this: GAMING and SLEEP set 0 to unload immediately.
+        try:
+            from great_sage.config import settings as _s
+            self.keep_alive = getattr(_s, "OLLAMA_KEEP_ALIVE_SECONDS", None)
+        except Exception:
+            self.keep_alive = None
         self.base_num_ctx = 8192
         self.image_num_ctx = 16384
 
