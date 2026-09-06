@@ -962,33 +962,40 @@ async def run_server(engine, voice) -> None:
     # voice message started from another window goes down the identical
     # path - transcription, memory, tools, reply, speech - with nothing
     # special-cased for it.
+    # Hold to talk: the key going down opens the microphone, the key
+    # coming up closes it and sends. Tracked so a release that arrives
+    # without a matching press - or a second press while already held -
+    # cannot start or stop the recorder twice.
     _hotkey_listening = {"on": False}
 
-    def _toggle_hotkey_listen():
+    def _hotkey_press():
+        if _hotkey_listening["on"]:
+            return
         mode = modes.get(
             ai_settings.load(settings.AI_SETTINGS_PATH).get("mode"))
-        if _hotkey_listening["on"]:
+        # SLEEP is meant to do nothing until spoken to first, and this IS
+        # speaking to it - so the key works in every mode. That is the
+        # point of S40: a way back in when everything else is wound down.
+        _hotkey_listening["on"] = True
+        log.info("Voice key down: listening (mode %s)", mode.label)
+        try:
+            ptt_recorder.start()
+            _send_ptt_state(True)
+        except Exception:
             _hotkey_listening["on"] = False
             _send_ptt_state(False)
-            log.info("Global hotkey: stop listening")
-            threading.Thread(
-                target=_log_exceptions(ptt_recorder.stop,
-                                       "hotkey transcription"),
-                daemon=True).start()
-        else:
-            # SLEEP is meant to do nothing until spoken to first, and this
-            # IS speaking to it - so the hotkey works in every mode. That
-            # is the point of S40: a way back in when everything else is
-            # wound down.
-            _hotkey_listening["on"] = True
-            log.info("Global hotkey: listening (mode %s)", mode.label)
-            try:
-                ptt_recorder.start()
-                _send_ptt_state(True)
-            except Exception:
-                _hotkey_listening["on"] = False
-                _send_ptt_state(False)
-                log.exception("Could not start recording from the hotkey")
+            log.exception("Could not start recording from the voice key")
+
+    def _hotkey_release():
+        if not _hotkey_listening["on"]:
+            return
+        _hotkey_listening["on"] = False
+        _send_ptt_state(False)
+        log.info("Voice key up: transcribing")
+        threading.Thread(
+            target=_log_exceptions(ptt_recorder.stop,
+                                   "voice key transcription"),
+            daemon=True).start()
 
     # ---- Automatic GAMING mode (Phase 10) ----
     # The mode in force before a game started, so it can be put back. None
@@ -1063,7 +1070,8 @@ async def run_server(engine, voice) -> None:
     if getattr(settings, "GLOBAL_HOTKEY", ""):
         try:
             from great_sage.core.global_hotkey import GlobalHotkey
-            _hotkey = GlobalHotkey(_ptt_binding(), _toggle_hotkey_listen)
+            _hotkey = GlobalHotkey(_ptt_binding(), _hotkey_press,
+                                   _hotkey_release)
             _hotkey.start()
         except Exception:
             log.exception("Global hotkey unavailable")

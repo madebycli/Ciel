@@ -9,18 +9,31 @@ keybind that only works when the window already has focus is no use for
 that - by the time you have focused the window you could have clicked the
 microphone.
 
-WHY RegisterHotKey AND NOT A KEYBOARD HOOK
-A low-level hook (WH_KEYBOARD_LL) would give key-down AND key-up, which
-would allow true hold-to-talk. It also means a callback on every keystroke
-the machine receives, system-wide, which is both a performance tax and
-indistinguishable from a keylogger to any anti-cheat worth the name -
-and Krazaa games. RegisterHotKey asks Windows to notify us about ONE
-combination and nothing else.
+HOLD TO TALK, WITHOUT A KEYBOARD HOOK
+Hold-to-talk needs both edges, and RegisterHotKey only reports the press.
+The obvious way to get the release is a low-level hook (WH_KEYBOARD_LL),
+and that is still refused here: it means a callback on every keystroke the
+machine receives, system-wide, which is both a performance tax and
+indistinguishable from a keylogger to any anti-cheat worth the name - and
+Krazaa games.
 
-The cost is that Windows reports the press but not the release, so this is
-a TOGGLE: press to start listening, press again to stop and send. That is
-also the better fit for gaming, where holding a key down would fight
-whatever the game does with it.
+So the two edges come from two different places:
+
+  PRESS    RegisterHotKey. Windows notifies us about ONE combination and
+           nothing else, and it also swallows the key, so the "1" in
+           Alt+1 does not additionally reach whatever game is focused.
+
+  RELEASE  GetAsyncKeyState, polled - but ONLY while the key is actually
+           down, which is the whole point. At rest this thread polls
+           nothing and reads no key state; it sits on PeekMessage waiting
+           for its one registered combination. The polling starts when the
+           press arrives and stops when the key comes up, so there is no
+           continuous system-wide key scanning to look suspicious, and it
+           queries the ONE key we already know was pressed rather than
+           reading the keyboard.
+
+This was briefly a toggle - press to start, press again to send - because
+a toggle needs only the press. Krazaa asked for the hold back.
 
 The thread owns its own message loop because RegisterHotKey delivers
 WM_HOTKEY to the thread that registered it, and that thread must be
@@ -31,6 +44,7 @@ import ctypes
 import ctypes.wintypes as wt
 import logging
 import threading
+import time
 
 log = logging.getLogger(__name__)
 
@@ -66,11 +80,18 @@ def parse(binding: str):
 
 
 class GlobalHotkey:
-    """Calls `on_press` whenever the combination is pressed, anywhere."""
+    """Hold-to-talk: `on_press` when the combination goes down anywhere,
+    `on_release` when it comes back up."""
 
-    def __init__(self, binding: str, on_press):
+    # A hold that lasts this long is a stuck key, a missed release, or a
+    # remote session that swallowed the key-up - not somebody genuinely
+    # talking. Releasing on our own is far better than recording for ever.
+    MAX_HOLD_S = 120.0
+
+    def __init__(self, binding: str, on_press, on_release=None):
         self.binding = binding
         self._on_press = on_press
+        self._on_release = on_release
         self._thread = None
         self._stop = threading.Event()
         self.active = False
@@ -144,21 +165,55 @@ class GlobalHotkey:
         self._ready.set()
         log.info("Global hotkey active: %s (works from any window)",
                  self.binding)
+        # SHORT, and the sign bit is the one we want - without an explicit
+        # restype ctypes hands back a 32-bit int and the test misreads.
+        user32.GetAsyncKeyState.restype = ctypes.c_short
+
+        def key_is_down():
+            return bool(user32.GetAsyncKeyState(key) & 0x8000)
+
+        def fire(cb, what):
+            if cb is None:
+                return
+            try:
+                cb()
+            except Exception:
+                log.exception("Global hotkey %s handler failed", what)
+
         msg = wt.MSG()
+        held = False
+        held_since = 0.0
         try:
             while not self._stop.is_set():
                 # PeekMessage rather than GetMessage: GetMessage blocks
                 # forever, and this thread has to notice stop() so the app
                 # can shut down instead of hanging on exit.
-                if user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
-                    if msg.message == WM_HOTKEY:
-                        try:
-                            self._on_press()
-                        except Exception:
-                            log.exception("Global hotkey handler failed")
-                else:
-                    self._stop.wait(0.03)
+                got = user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1)
+                if got and msg.message == WM_HOTKEY and not held:
+                    held = True
+                    held_since = time.monotonic()
+                    fire(self._on_press, "press")
+                elif held:
+                    # Only ever reached while the key is genuinely down.
+                    if not key_is_down():
+                        held = False
+                        fire(self._on_release, "release")
+                    elif time.monotonic() - held_since > self.MAX_HOLD_S:
+                        log.warning("Voice key held for over %.0fs - "
+                                    "releasing it; the key-up was probably "
+                                    "missed", self.MAX_HOLD_S)
+                        held = False
+                        fire(self._on_release, "release")
+                if not got:
+                    # 20ms while held is well under human release timing and
+                    # costs nothing; the same wait when idle just keeps the
+                    # loop responsive to stop().
+                    self._stop.wait(0.02)
         finally:
+            # Never leave the microphone open because the thread went away
+            # mid-hold - on rebind, on shutdown, on anything.
+            if held:
+                fire(self._on_release, "release")
             user32.UnregisterHotKey(None, 1)
             self.active = False
             log.info("Global hotkey released")

@@ -2084,8 +2084,8 @@ body.mini:hover #mini-exit { opacity: 1; }
       <div id="voice-input-settings">
         <label class="slider-label">Voice key &mdash; global</label>
         <button id="ptt-rebind-btn" data-combo="alt+1" title="Works from any window, even while a game has focus">Alt+1</button>
-        <div class="setting-hint">Press once to start listening, press again to
-          send. Works from any window &mdash; you do not have to leave your game.</div>
+        <div class="setting-hint">Hold to talk, release to send. Works from any
+          window &mdash; you do not have to leave your game.</div>
         <div id="ptt-status" class="setting-hint"></div>
 
         <label>
@@ -5249,10 +5249,10 @@ const MINI_CHAT_PAD = 3;
       // one actually registered. Put it back to the truth.
       if (msg.failed && msg.binding) setPttCombo(msg.binding);
     } else if (msg.type === 'ptt_state') {
-      // The voice key is a GLOBAL toggle owned by Python, so the page
-      // cannot see it being pressed - by design, since it has to work
-      // while a game has focus. The listening visuals follow this
-      // message instead of a local key event.
+      // The voice key is held down, and it is owned by Python - the page
+      // cannot see it at all, by design, since it has to work while a
+      // game has focus. The listening visuals follow this message
+      // instead of a local key event.
       const on = !!msg.listening;
       if (on && !pttActive) pttPulse = 1;   // one decaying flash on open
       pttActive = on;
@@ -5571,16 +5571,14 @@ const MINI_CHAT_PAD = 3;
     }
     // The voice key is NOT handled here any more.
     //
-    // It used to be: keydown sent ptt_start, keyup sent ptt_stop, which is
-    // hold-to-talk. The global hotkey drives the SAME recorder from
-    // Python, and it is a toggle (RegisterHotKey reports the press but
-    // never the release). With the HUD focused, one press ran both - the
-    // hotkey opened the mic and flipped its flag, this handler opened it
-    // again, and the key release closed it about a third of a second
-    // later while the hotkey still believed it was listening. The next
-    // press then took the "stop" branch and stopped nothing. Measured in
-    // the packaged build: two presses produced five toggle events and a
-    // 0.338s recording.
+    // It used to be: keydown sent ptt_start, keyup sent ptt_stop. Python
+    // drives the SAME recorder from the global hotkey, and it is still
+    // hold-to-talk there, so with the HUD focused a single press ran both
+    // paths at once - two starts, then a stop from whichever released
+    // first. Measured in the packaged build, back when the Python side
+    // was a toggle: two presses produced five toggle events and a 0.338s
+    // recording. Having two owners is the bug, not which semantics they
+    // used.
     //
     // One owner now. Python holds the key, this page only shows what it
     // is doing (see the ptt_state handler). preventDefault stays so the
