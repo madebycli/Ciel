@@ -778,6 +778,16 @@
      is backwards: the intro should start blurred immediately and only
      the return-to-normal should animate. This forces zero transition
      time for the one frame where the intro state is first applied. */
+  /* The overlay NEVER wears the intro. The intro state now starts in the
+     markup so the first paint is dark, and the overlay does not play the
+     intro that would take it off - which left it at blur(36px)
+     brightness(0.08) permanently, i.e. "the overlay visuals are gone".
+     The class removal in script fixes the normal case; this makes it
+     structural, so no future ordering bug can blank the overlay again. */
+  body.mini {
+    filter: none !important;
+    transform: none !important;
+  }
   body.startup-snap {
     transition: none !important;
   }
@@ -2056,7 +2066,7 @@ body.mini:hover #mini-exit { opacity: 1; }
       <h4>VOICE INPUT</h4>
       <div id="voice-input-settings">
         <label class="slider-label">Push-to-talk key</label>
-        <button id="ptt-rebind-btn" data-combo="alt+1">Alt+1</button>
+        <button id="ptt-rebind-btn" data-combo="alt+1" title="Works from any window, even while a game has focus">Alt+1</button>
 
         <label>
           <input type="checkbox" id="wake-word-toggle">
@@ -7107,7 +7117,31 @@ const MINI_CHAT_PAD = 3;
   // The standalone overlay skips the startup intro: it is a 900ms zoom
   // and blur meant to introduce a full-screen scene, and it reads as a
   // glitch on a small always-on-top square that is meant to just appear.
-  if (!IS_STANDALONE_OVERLAY) playStartupIntro();
+  // The intro state now starts in the MARKUP so the first paint is
+  // already dark - see the body.startup-intro CSS. That means SOMETHING
+  // has to take it off again, and the overlay does not play the intro:
+  // it skipped straight past this line and sat at blur(36px)
+  // brightness(0.08) forever, which reads exactly as "the overlay
+  // visuals are gone".
+  if (IS_STANDALONE_OVERLAY) {
+    document.body.classList.remove('startup-snap', 'startup-active',
+                                   'startup-intro');
+  } else {
+    playStartupIntro();
+  }
+
+  // Failsafe, deliberately unconditional. Any path that leaves
+  // startup-intro applied makes the whole app invisible rather than
+  // merely wrong, and that failure looks identical to a crash. If the
+  // intro has not cleared itself within four seconds, clear it - a
+  // missing fade is a far smaller fault than a blank window.
+  setTimeout(() => {
+    if (document.body.classList.contains('startup-intro')) {
+      console.warn('startup-intro never cleared; removing it');
+      document.body.classList.remove('startup-snap', 'startup-active',
+                                     'startup-intro');
+    }
+  }, 4000);
   document.getElementById('btn-startup').addEventListener('click', playStartupIntro);
 
   // Launched by overlay_window.py: go straight to overlay visuals. Done

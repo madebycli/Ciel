@@ -89,6 +89,21 @@ class GlobalHotkey:
     def stop(self):
         self._stop.set()
 
+    def rebind(self, binding: str) -> bool:
+        """Point the hotkey at a different combination.
+
+        The old registration is released first: Windows refuses to
+        register a combination twice, so rebinding without unregistering
+        would silently leave the OLD key working and the new one dead.
+        """
+        if (binding or "").strip().lower() == (self.binding or "").strip().lower():
+            return True
+        self.stop()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self.binding = binding
+        return self.start()
+
     def _run(self, mods, key):
         user32 = ctypes.windll.user32
         if not user32.RegisterHotKey(None, 1, mods, key):

@@ -1016,12 +1016,28 @@ async def run_server(engine, voice) -> None:
     except Exception:
         log.exception("Game watcher unavailable")
 
+    def _ptt_binding():
+        """The push-to-talk key from HUD settings, or the default.
+
+        There is ONE keybind, not two. The settings pane used to set a
+        key that worked only while the window had focus, while a separate
+        hardcoded combination worked everywhere - so the key Krazaa chose
+        was the one that did less. The chosen key is now the global one.
+        """
+        try:
+            saved = hud_settings.load(settings.HUD_SETTINGS_PATH)
+            combo = (saved.get("hud_settings") or saved).get("ptt-combo")
+            if isinstance(combo, str) and combo.strip():
+                return combo.strip()
+        except Exception:
+            log.exception("Could not read the push-to-talk key")
+        return getattr(settings, "GLOBAL_HOTKEY", "ctrl+alt+s")
+
     _hotkey = None
     if getattr(settings, "GLOBAL_HOTKEY", ""):
         try:
             from great_sage.core.global_hotkey import GlobalHotkey
-            _hotkey = GlobalHotkey(settings.GLOBAL_HOTKEY,
-                                   _toggle_hotkey_listen)
+            _hotkey = GlobalHotkey(_ptt_binding(), _toggle_hotkey_listen)
             _hotkey.start()
         except Exception:
             log.exception("Global hotkey unavailable")
@@ -1342,6 +1358,20 @@ async def run_server(engine, voice) -> None:
                     blob = data.get("settings")
                     if isinstance(blob, dict):
                         hud_settings.save_hud_settings(settings.HUD_SETTINGS_PATH, blob)
+                        # The push-to-talk key IS the global one, so a
+                        # change here re-registers it immediately rather
+                        # than at the next launch.
+                        combo = blob.get("ptt-combo")
+                        if _hotkey is not None and isinstance(combo, str) and combo:
+                            if _hotkey.rebind(combo):
+                                log.info("Push-to-talk key is now %s "
+                                         "(works from any window)", combo)
+                            else:
+                                await websocket.send(json.dumps({
+                                    "type": "error",
+                                    "message": ("Could not register %s - another "
+                                                "application may already use it."
+                                                % combo)}))
                 elif msg_type == "chat":
                     active_connection["websocket"] = websocket
                     active_connection["sink"] = sink
