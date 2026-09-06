@@ -756,6 +756,13 @@ async def run_server(engine, voice) -> None:
         except Exception:
             log.exception("Could not restore saved chats")
         try:
+            # Identity header (spec correction S5): Great Sage is the name,
+            # the model is technical detail. Sent from here so switching
+            # models never means editing the page.
+            await websocket.send(json.dumps({
+                "type": "model_info",
+                "model": settings.OLLAMA_DEFAULT_MODEL,
+                "provider": "Ollama / Local"}))
             await websocket.send(json.dumps({
                 "type": "memory",
                 "facts": memory.load_memory(settings.MEMORY_FILE_PATH)}))
