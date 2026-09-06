@@ -821,3 +821,62 @@ matplotlib on the same hunch once shipped a build with no voice.
 
 Without a CUDA GPU the app still runs and still talks, but F5-TTS on CPU
 takes far longer to speak a sentence than the sentence takes to say.
+
+---
+
+## Phases 5-7 done: tools, vision, web
+
+Great Sage has 11 tools now, all behind the validation layer in
+`core/tools.py`:
+
+| tool | what it does |
+|---|---|
+| get_time, get_system_status | reads the clock and the machine |
+| list_running_apps, get_focused_window | what is open, what is focused |
+| open_url, open_application, open_folder | acts on the desktop |
+| search_files | finds files in the usual folders |
+| **look_at_screen** | screenshots and READS the screen |
+| **web_search, web_fetch** | searches and reads pages (permission-gated) |
+
+Verified in the PACKAGED build, every one firing and answering, with zero
+errors in the log.
+
+### The lesson that repeated three times
+
+A tool that is registered, validated and working will still never be
+called if the SYSTEM PROMPT does not say Great Sage can do it. It
+happened with open_url ("That authority has not been granted"), then
+look_at_screen (it invented an answer), then get_focused_window (it
+invented an application name).
+
+**When a tool never fires, check the prompt before checking the tool.**
+
+The trigger list in `might_need_tools` is the second place to look. "apps"
+did not match "what app am I in", so the gate blocked the turn entirely
+and the model made something up. A near miss there is the difference
+between reading the answer and inventing one.
+
+### Context size, which broke vision silently
+
+Ollama defaults to `num_ctx` 4096. The persona prompt, recalled memory,
+the tool schema and the conversation already fill most of it, and ONE
+image pushes it over:
+
+    request (4956 tokens) exceeds the available context size (4096)
+
+It surfaced as a bare HTTP 400 because the provider discarded the
+response body - the same code passed from source and failed in the build,
+purely on how long the conversation happened to be. `num_ctx` is now
+sized per request (8192 normally, 16384 with an image) at a measured cost
+of +214MB VRAM, and the provider reports what Ollama actually said.
+
+### Screen capture plumbing
+
+A tool returns TEXT, but a screenshot must reach the model as an IMAGE.
+The capture goes into a one-shot buffer in `tools.py`; the tool's text
+result only says what was captured; `ChatEngine.send_with_tools` drains
+the buffer and attaches the picture to the follow-up call. Every other
+tool stays a plain name -> string.
+
+One shot on purpose: a pending screenshot would otherwise be re-sent with
+a later, unrelated question.
