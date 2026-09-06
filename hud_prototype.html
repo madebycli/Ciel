@@ -186,6 +186,11 @@
   #center-panel #chat-attach { width: 26px; }
   #center-panel #chat-input { flex: 1 1 auto; min-width: 0; }
   #center-panel #topic-list .topic-menu-btn { width: 18px; }
+  /* Same #center-panel button { width:100% } trap. Here it did not just
+     look wrong: the full-width delete button squeezed the fact text into
+     a column about one character across, which is the "memory text was a
+     single letter" fault. */
+  #center-panel #memory-list .memory-del { width: 20px; }
 
   #chat-attach {
     flex: 0 0 auto; width: 26px; height: 26px; line-height: 24px;
@@ -960,7 +965,18 @@
     border: 0; border-top: 1px solid rgba(255,255,255,0.12);
     margin: 4px 0 2px;
   }
-  #chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #chat-main {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+    /* Without a height the column is only as tall as its content, so the
+       input bar sat directly under the last message instead of at the
+       bottom of the panel. */
+    min-height: 58vh;
+  }
+  /* The transcript takes the slack, which is what pushes the input bar
+     down to the bottom edge. */
+  #chat-view { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  #memory-view { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
   /* Identity above the transcript. Great Sage is the name; the model is
      technical detail and is deliberately quieter. */
@@ -977,7 +993,7 @@
     opacity: 0.45;
   }
   #chat-model-provider:not(:empty)::before { content: " · "; }
-  #chat-view, #memory-view { flex: 1; min-width: 0; }
+
 
   .panel-note { opacity: 0.55; font-size: 11px; line-height: 1.5; margin: 6px 0 10px; }
   #memory-search {
@@ -7564,6 +7580,10 @@ const MINI_CHAT_PAD = 3;
     showingMemory = !!memory;
     if (chatViewEl) chatViewEl.hidden = showingMemory;
     if (memoryViewEl) memoryViewEl.hidden = !showingMemory;
+    // The input bar belongs to the conversation, not to the memory list -
+    // there is nothing to say to a list of facts.
+    const bar = document.getElementById('chat-bar');
+    if (bar) bar.hidden = showingMemory;
     if (memoryNavBtn) memoryNavBtn.classList.toggle('active', showingMemory);
     if (showingMemory) renderMemory();
   }
