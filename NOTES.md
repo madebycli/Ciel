@@ -760,3 +760,64 @@ the string literal breaks across lines. Build the text with `chr(10)` and
 emit it via `json.dumps`, or splice by line index. Also: reading a file
 through `sed 's/^/  /'` adds two spaces, so anchors copied from that
 output will never match.
+
+---
+
+## Measured footprint and system requirements
+
+All measured on this machine (RTX 3060 12GB, Ryzen 9 7900X, 32GB RAM),
+not estimated.
+
+### VRAM, attributed by measuring the delta each piece adds
+
+| | VRAM |
+|---|---|
+| Great Sage app: HUD WebGL + F5-TTS + Whisper | **~1.1 GB** |
+| qwen3.5:4b while loaded | **~3.8 GB** |
+| **Total while answering** | **~4.9 GB** |
+| Free on a 12GB card | **~7 GB** |
+
+Ollama UNLOADS the model between requests, so the 3.8GB is returned while
+Great Sage sits idle and only the ~1.1GB app footprint remains. That is
+why gaming alongside it works: the heavy part is not resident unless a
+reply is actually being generated.
+
+### Disk
+
+| | size |
+|---|---|
+| Great Sage application folder | 5.55 GB |
+| ...of which torch | 4.08 GB |
+| ...of which the overlay bundle | 0.36 GB |
+| Ollama runtime | 1.58 GB |
+| Models (qwen3.5:4b + qwen2.5:3b fallback) | 5.32 GB |
+| Voice weights, downloaded on first use | 3.61 GB |
+| **Total installed** | **~16 GB** |
+
+torch is 74% of the application folder and is not reducible without
+losing CUDA. `bitsandbytes` (~120MB) was excluded after verifying it is
+never imported - importing the whole voice stack leaves it absent from
+`sys.modules`, while pyarrow, llvmlite, numba, datasets, torchvision,
+pandas, scipy and matplotlib all appear and were left alone. Excluding
+matplotlib on the same hunch once shipped a build with no voice.
+
+### Requirements
+
+**Minimum**
+- Windows 10/11
+- NVIDIA GPU, 6GB VRAM (4GB works with a smaller model, but voice becomes
+  the bottleneck)
+- 16GB RAM
+- 20GB free disk
+- Any modern quad-core CPU
+- WebView2 runtime (ships with Windows 11)
+
+**Recommended**
+- RTX 3060 12GB or better - this is what everything above was tuned on
+- 32GB RAM
+- SSD, 25GB free
+- A GPU with headroom left over is what makes gaming alongside it
+  comfortable
+
+Without a CUDA GPU the app still runs and still talks, but F5-TTS on CPU
+takes far longer to speak a sentence than the sentence takes to say.

@@ -277,6 +277,14 @@ excludes = [
     'TTS', 'coqui_tts', 'pocket_tts', 'pyttsx3', 'cutlet', 'fugashi',
     # Dev-only, never imported by the app.
     'PyInstaller', 'pytest', 'IPython', 'jupyter', 'notebook', 'tkinter',
+    # bitsandbytes: ~120MB of quantisation kernels that nothing here
+    # loads. Verified, not assumed - importing the entire voice stack
+    # (f5_tts.api, infer_process, faster_whisper, pedalboard) leaves it
+    # absent from sys.modules, while pyarrow, llvmlite, numba, datasets,
+    # torchvision, pandas, scipy AND matplotlib all appear and are
+    # therefore left alone. Excluding matplotlib on the same hunch once
+    # shipped a build with no voice at all.
+    'bitsandbytes',
     # PySide6, actively excluded rather than just left out. preflight.py
     # imports it to report whether overlay mode is available, and that
     # import alone is enough for PyInstaller to pull the whole of Qt in.
