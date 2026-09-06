@@ -40,12 +40,34 @@ class OllamaProvider(ModelProvider):
         self.model = model
         self.timeout = timeout
         self.think = think
+        # Deliberately above Ollama's 4096 default; see _needed_ctx. The
+        # KV cache grows with this, so it is raised where it is needed
+        # rather than pinned high for every request.
+        self.base_num_ctx = 8192
+        self.image_num_ctx = 16384
 
     def _payload(self, messages: List[Message], stream: bool) -> dict:
         body = {"model": self.model, "messages": messages, "stream": stream}
         if self.think is not None:
             body["think"] = self.think
+        body["options"] = {"num_ctx": self._needed_ctx(messages)}
         return body
+
+    def _needed_ctx(self, messages) -> int:
+        """How much context this request actually needs.
+
+        Ollama defaults to 4096, which this app overruns easily and
+        silently: the persona prompt, the recalled memory, the tool
+        schema and the conversation already fill most of it, and ONE
+        image pushes it over. The failure is an HTTP 400 that says
+        nothing unless the body is read - it surfaced as "Ollama returned
+        an error" and looked like the screen tool was broken.
+        """
+        if any(m.get("images") for m in messages if isinstance(m, dict)):
+            # An image is worth on the order of a thousand tokens, and
+            # look_at_screen sends one on top of a full conversation.
+            return self.image_num_ctx
+        return self.base_num_ctx
 
     def send_message(self, messages: List[Message]) -> str:
         try:
@@ -143,7 +165,22 @@ class OllamaProvider(ModelProvider):
                 "Ollama returned 404 - the model may not be pulled yet. "
                 "Try `ollama pull <model-name>`."
             )
-        return f"Ollama returned an error (HTTP {status})."
+        # Include what Ollama actually said. Without this a 400 reads as
+        # "Ollama returned an error (HTTP 400)" and nothing else, which is
+        # a dead end - the cause is always in the body, and this is a
+        # LOCAL server, so there is nothing sensitive in it to leak.
+        detail = ""
+        try:
+            if exc.response is not None:
+                payload = exc.response.json()
+                detail = str(payload.get("error") or payload)[:300]
+        except Exception:
+            try:
+                detail = (exc.response.text or "")[:300]
+            except Exception:
+                detail = ""
+        return ("Ollama returned an error (HTTP %s)%s"
+                % (status, ": " + detail if detail else "."))
 
     def chat_raw(self, messages, tools=None):
         """One /api/chat round trip, returning Ollama's whole `message`.

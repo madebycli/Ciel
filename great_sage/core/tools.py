@@ -598,4 +598,9 @@ BY_NAME = {t.name: t for t in REGISTRY}
 _TRIGGERS = _TRIGGERS + (
     "google", "search for", "look up", "lookup", "research", "news",
     "latest", "current", "who is", "what is the", "find out", "web",
+    # "apps" did not match "what app am I in", so the gate blocked the
+    # turn and Great Sage INVENTED an application name. A near miss on
+    # this list is not a harmless miss: it is the difference between
+    # reading the answer and making one up.
+    "app ", "program", "window", "am i in", "am i using", "right now",
 )
