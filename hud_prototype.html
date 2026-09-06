@@ -368,6 +368,27 @@
     margin: 6px 0 2px; border: 1px solid rgba(255,255,255,0.22);
   }
   .history-entry.user img { margin-left: auto; }
+  /* An action, not a message: dimmer and tighter, visibly a note about
+     what happened rather than something anyone said. */
+  .history-entry.action {
+    max-width: 100%; padding: 3px 0 3px 10px;
+    margin-bottom: 6px; border-left: 1px dashed rgba(255,255,255,0.28);
+    background: none;
+  }
+  #center-panel .action-head {
+    width: auto; background: none; border: 0; padding: 0;
+    color: rgba(200,225,245,0.55); cursor: pointer;
+    font: inherit; font-size: 10px; letter-spacing: 0.1em;
+    text-align: left;
+  }
+  #center-panel .action-head:hover { color: rgba(235,245,255,0.9); }
+  .action-body {
+    margin-top: 4px; padding: 6px 8px; font-size: 10px; line-height: 1.5;
+    color: rgba(210,230,245,0.75); white-space: pre-wrap;
+    background: rgba(255,255,255,0.04);
+    border-left: 1px solid rgba(255,255,255,0.16);
+    max-height: 170px; overflow-y: auto;
+  }
   /* [hidden] alone loses to the explicit `display:flex` above (an ID
      rule always beats the UA default [hidden]{display:none} stylesheet)
      - this one's more specific than plain #chat-bar so it wins instead. */
@@ -1071,9 +1092,20 @@
   /* Chat workspace (spec correction: Memory lives here, not in the core
      menu). Same two-column shape the history panel already had, with the
      sidebar gaining a Memory entry above the conversation list. */
-  #chat-layout { display: flex; gap: 16px; margin-top: 4px; align-items: stretch; }
+  /* The panel sections share a 700px max-width, which is right for a
+     column of settings - a long line of prose is hard to read - and wrong
+     for the chat workspace, which has a sidebar AND a transcript to fit.
+     At 700 inside a 1408px panel it sat as a narrow strip in the middle
+     with the sides empty. Only the chat section opts out. */
+  #panel-section-history {
+    max-width: 1180px;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  #chat-layout { display: flex; gap: 20px; margin-top: 4px; align-items: stretch; }
   #chat-sidebar {
-    flex: 0 0 176px; display: flex; flex-direction: column; gap: 6px;
+    flex: 0 0 208px; display: flex; flex-direction: column; gap: 6px;
     border-right: 1px solid rgba(255,255,255,0.12); padding-right: 12px;
   }
   #chat-sidebar > button {
@@ -5088,6 +5120,13 @@ const MINI_CHAT_PAD = 3;
         renderTopicList();
         saveChats();
       }
+    } else if (msg.type === 'tool_used') {
+      // Every action Great Sage takes goes into the transcript, so Krazaa
+      // can see WHAT it did and check the result rather than taking the
+      // reply on trust. In the chat itself rather than a separate log,
+      // because an action and the answer it produced only make sense next
+      // to each other.
+      addActionEntry(msg.name, msg.result || '');
     } else if (msg.type === 'mode') {
       // GAMING and SLEEP hand the GPU back: the model unloads server
       // side, and the scene steps down here. Without this half, the HUD
@@ -8279,6 +8318,29 @@ const MINI_CHAT_PAD = 3;
     });
   }
 
+  // ---------- Action trail ----------
+  const TOOL_LABELS = {
+    get_time: 'checked the clock',
+    get_system_status: 'checked this machine',
+    list_running_apps: 'listed open applications',
+    get_focused_window: 'checked the focused window',
+    open_url: 'opened a link',
+    open_application: 'launched an application',
+    open_folder: 'opened a folder',
+    search_files: 'searched your files',
+    look_at_screen: 'looked at your screen',
+    web_search: 'searched the web',
+    web_fetch: 'read a web page',
+  };
+  function addActionEntry(name, result) {
+    const topic = currentTopic();
+    const entry = { role: 'action', tool: name,
+                    text: TOOL_LABELS[name] || name,
+                    result: String(result || '').slice(0, 600) };
+    if (topic) { topic.messages.push(entry); saveChats(); }
+    renderHistory();
+  }
+
   function renderHistory() {
     historyList.innerHTML = '';
     const messages = currentTopic() ? currentTopic().messages : [];
@@ -8289,6 +8351,23 @@ const MINI_CHAT_PAD = 3;
     messages.forEach((entry) => {
       const div = document.createElement('div');
       div.className = 'history-entry ' + entry.role;
+      if (entry.role === 'action') {
+        // Collapsed by default: the trail should be scannable, with the
+        // detail one click away rather than burying the conversation.
+        const head = document.createElement('button');
+        head.type = 'button';
+        head.className = 'action-head';
+        head.textContent = '> ' + entry.text;
+        const body = document.createElement('div');
+        body.className = 'action-body';
+        body.textContent = entry.result || '(no output)';
+        body.hidden = true;
+        head.addEventListener('click', () => { body.hidden = !body.hidden; });
+        div.appendChild(head);
+        div.appendChild(body);
+        historyList.appendChild(div);
+        return;
+      }
       const roleLabel = document.createElement('span');
       roleLabel.className = 'role-label';
       roleLabel.textContent = entry.role === 'user' ? 'YOU' : 'GREAT SAGE';

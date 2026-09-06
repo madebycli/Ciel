@@ -64,6 +64,12 @@ def _sanitise(chats: Any) -> List[Dict[str, Any]]:
                 continue
             entry = {"role": str(m.get("role", ""))[:32],
                      "text": str(m.get("text", ""))}
+            # Action entries carry what was run and what it returned. Kept
+            # so the trail survives a restart - the point of it is being
+            # able to look back and check what Great Sage actually did.
+            if m.get("role") == "action":
+                entry["tool"] = str(m.get("tool", ""))[:64]
+                entry["result"] = str(m.get("result", ""))[:600]
             # Thumbnails only, and capped. The page stores downscaled
             # copies rather than what was sent to the model - a full
             # screenshot is hundreds of KB of base64, and a few of those
