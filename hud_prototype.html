@@ -188,6 +188,24 @@
      rule always beats the UA default [hidden]{display:none} stylesheet)
      - this one's more specific than plain #chat-bar so it wins instead. */
   #chat-bar[hidden] { display: none; }
+  /* Spec S11: a visible toggle, OFF by default. Deliberation costs real
+     latency, so its state has to be obvious before you send, not after. */
+  #think-toggle {
+    background: none; border: 1px solid rgba(120,190,255,0.35);
+    color: rgba(200,225,255,0.65); cursor: pointer;
+    padding: 0 10px; margin-left: 6px; font: inherit;
+    letter-spacing: 0.12em; font-size: 11px; border-radius: 2px;
+  }
+  #think-toggle:hover { color: #fff; border-color: rgba(160,215,255,0.7); }
+  #think-toggle.busy { animation: thinkPulse 1.1s ease-in-out infinite; }
+  @keyframes thinkPulse {
+    0%, 100% { border-color: rgba(120,190,255,0.35); }
+    50%      { border-color: rgba(200,235,255,0.95); }
+  }
+  #think-toggle[aria-pressed="true"] {
+    color: #0a1420; background: rgba(170,220,255,0.9);
+    border-color: rgba(200,235,255,0.95);
+  }
   #chat-input {
     flex: 1;
     background: rgba(0,0,0,0.9); border: 2px solid #ffffff;
@@ -1394,6 +1412,8 @@ body.mini:hover #mini-exit { opacity: 1; }
 <div id="chat-bar">
   <input type="text" id="chat-input" placeholder="Say something to Great Sage..." autocomplete="off">
   <button id="chat-send">SEND</button>
+  <button id="think-toggle" type="button" aria-pressed="false"
+          title="Let Great Sage deliberate before answering. Slower.">THINK</button>
   <span id="ws-status">connecting...</span>
 </div>
 
@@ -4582,7 +4602,8 @@ const MINI_CHAT_PAD = 3;
       // finishes. Prefer it, so the transcript records what was actually
       // delivered rather than a draft that never reached the speaker. Older
       // servers omit the field, hence the fallback.
-      if (typeof msg.text === 'string' && msg.text) replyBuffer = msg.text;
+      if (window.__endThinkingBusy) window.__endThinkingBusy();
+        if (typeof msg.text === 'string' && msg.text) replyBuffer = msg.text;
       if (replyBuffer) {
         ensureActiveTopic();
         currentTopic().messages.push({ role: 'assistant', text: replyBuffer });
@@ -4740,9 +4761,45 @@ const MINI_CHAT_PAD = 3;
     renderHistory();
     saveChats();
     aiThinking = true;
-    ws.send(JSON.stringify({ type: 'chat', text }));
+    ws.send(JSON.stringify({ type: 'chat', text, think: thinkHarder }));
+    // Deliberation measured at 210-380s on this machine, so without a
+    // visible state the window looks frozen for minutes. Spec S11 allows
+    // showing THAT it is thinking - never the reasoning itself, which
+    // stays on Ollama's separate channel and never reaches the page.
+    if (thinkHarder) setThinkingBusy(true);
     chatInput.value = '';
   }
+  // Think Harder (spec S11). Off by default and deliberately NOT
+  // persisted across launches: it costs real latency per message, so it
+  // should be a choice made for a hard question, not a setting that
+  // quietly slows every reply because it was left on last week.
+  let thinkHarder = false;
+  const thinkToggle = document.getElementById('think-toggle');
+  if (thinkToggle) {
+    thinkToggle.addEventListener('click', () => {
+      thinkHarder = !thinkHarder;
+      thinkToggle.setAttribute('aria-pressed', thinkHarder ? 'true' : 'false');
+    });
+  }
+
+  // An elapsed counter, because "thinking..." alone gives no sense of
+  // whether a four-minute wait is progressing or hung.
+  let thinkBusyTimer = null;
+  function setThinkingBusy(on) {
+    const el = document.getElementById('ws-status');
+    clearInterval(thinkBusyTimer);
+    if (thinkToggle) thinkToggle.classList.toggle('busy', !!on);
+    if (!on) { thinkBusyTimer = null; if (el) el.textContent = ''; return; }
+    const started = Date.now();
+    const tick = () => {
+      if (!el) return;
+      el.textContent = 'thinking... ' + Math.round((Date.now() - started) / 1000) + 's';
+    };
+    tick();
+    thinkBusyTimer = setInterval(tick, 1000);
+  }
+  window.__endThinkingBusy = () => setThinkingBusy(false);
+
   chatSendBtn.addEventListener('click', sendChatMessage);
   chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendChatMessage();

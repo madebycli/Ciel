@@ -371,7 +371,79 @@ def _chat_takeaway(provider, title, messages):
     return None if out.upper().startswith("NOTHING") else out
 
 
-def _handle_chat(text, engine, voice, sink, websocket, loop) -> None:
+def _deep_review(provider, question, draft):
+    """Think Harder (spec S11 / S69): the model checks its OWN answer.
+
+    Deliberately NOT the model native thinking mode, and not a bigger
+    model. Both were measured on this machine:
+
+        normal reply          ~1.3s
+        native thinking       155-380s, and it TIMED OUT 2 runs in 3;
+                              at the default 4096 context it also
+                              returned empty content 3 times in 4,
+                              having spent the whole budget deliberating
+
+    Minutes per message is unusable for a spoken assistant, and a larger
+    model would cost the VRAM headroom Krazaa keeps for games and calls.
+    A second pass with the SAME model is one extra round trip - a few
+    seconds - and no extra VRAM whatsoever.
+
+    Returns a replacement answer, or None to keep the draft. The review
+    is a private working step: it never reaches the page or the speaker,
+    so no chain-of-thought is exposed (S11).
+    """
+    NL = chr(10)
+    # TWO steps, not one. Asking a 4B model to judge and rewrite in a
+    # single call was unreliable in both directions, measured here:
+    #   with a checklist  -> caught both planted errors, but wrote ABOUT
+    #                        the draft ("The draft contains a factual
+    #                        error...") instead of answering, and shouted
+    #   one blunt line    -> clean format, but caught NEITHER error and
+    #                        rewrote a correct answer
+    # Separating the verdict from the rewrite gives each call one job.
+    verdict_prompt = (
+        "Is the ANSWER below correct, and does it avoid claiming any "
+        "ability or action it does not actually have?" + NL +
+        "Reply with one word: YES or NO." + NL + NL +
+        "QUESTION: " + question + NL + "ANSWER: " + draft)
+    try:
+        verdict = provider.send_message(
+            [{"role": "user", "content": verdict_prompt}])
+    except Exception:
+        log.exception("Deep review verdict failed; keeping the draft")
+        return None
+    if "NO" not in (verdict or "").strip().upper()[:6]:
+        return None                     # judged fine, or unparseable
+
+    rewrite_prompt = (
+        "The ANSWER below is wrong or claims something untrue. Write the "
+        "correct answer." + NL +
+        "Reply with the answer ONLY - no preamble, no mention of the "
+        "original, no explanation. Keep it about the same length." + NL +
+        "Never say you cannot do something; state what is missing "
+        "instead, for example: No connection to that system exists."
+        + NL + NL + "QUESTION: " + question + NL + "ANSWER: " + draft)
+    try:
+        out = provider.send_message(
+            [{"role": "user", "content": rewrite_prompt}])
+    except Exception:
+        log.exception("Deep review rewrite failed; keeping the draft")
+        return None
+    out = (out or "").strip()
+    if not out or out.upper().startswith("KEEP"):
+        return None
+    # A "revision" far longer than the draft is usually the model
+    # explaining itself rather than answering, which would be worse than
+    # what it replaced.
+    if len(out) > max(400, len(draft) * 3):
+        log.info("Deep review discarded: %d chars replacing %d",
+                 len(out), len(draft))
+        return None
+    return out
+
+
+def _handle_chat(text, engine, voice, sink, websocket, loop,
+                 think=False) -> None:
     """Runs in its own thread so the async server loop stays free to
     receive the "audio_ended" acks that unblock voice.speak() below.
 
@@ -450,6 +522,16 @@ def _handle_chat(text, engine, voice, sink, websocket, loop) -> None:
         # invisible to Master rather than showing as text that changes on
         # screen mid-reply.
         draft = "".join(reply_chunks)
+        if think and draft.strip():
+            revised = _deep_review(engine.provider, text, draft)
+            if revised:
+                log.info("Think Harder revised the reply (%d -> %d chars)",
+                         len(draft), len(revised))
+                draft = revised
+                reply_chunks = [revised]
+                # Keep the model own history holding the delivered answer,
+                # not the draft it replaced.
+                engine.replace_last_reply(revised)
         guarded, note = guardrails.apply(
             draft,
             protected=_guard_protected(),
@@ -522,7 +604,8 @@ def _handle_chat(text, engine, voice, sink, websocket, loop) -> None:
             pass
 
 
-def _start_chat_thread(text, engine, voice, sink, websocket, loop) -> None:
+def _start_chat_thread(text, engine, voice, sink, websocket, loop,
+                       think=False) -> None:
     """Shared by the "chat" message handler and both voice-input paths
     (push-to-talk, wake-word) below - same background-thread dispatch
     either way, so a voice-originated message goes through the exact same
@@ -530,6 +613,7 @@ def _start_chat_thread(text, engine, voice, sink, websocket, loop) -> None:
     threading.Thread(
         target=_handle_chat,
         args=(text, engine, voice, sink, websocket, loop),
+        kwargs={"think": think},
         daemon=True,
     ).start()
 
@@ -858,7 +942,9 @@ async def run_server(engine, voice) -> None:
                     active_connection["sink"] = sink
                     if voice is not None:
                         voice.set_sink(sink)
-                    _start_chat_thread(data.get("text", ""), engine, voice, sink, websocket, loop)
+                    _start_chat_thread(data.get("text", ""), engine,
+                                       voice, sink, websocket, loop,
+                                       think=bool(data.get("think")))
                 elif msg_type == "audio_ended":
                     sink.notify_audio_ended()
                 elif msg_type == "ptt_start":
