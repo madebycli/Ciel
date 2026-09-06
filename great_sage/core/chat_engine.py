@@ -209,8 +209,13 @@ class ChatEngine:
                     except Exception as exc:
                         result = "FAILED: %s" % exc
                     used.append((name, result))
+                    # The id is carried through, not invented: OpenAI and
+                    # Anthropic both match a result to the CALL that asked
+                    # for it, and a mismatched id is a 400. Ollama ignores
+                    # the field, so one shape serves all three.
                     outgoing.append({"role": "tool", "content": str(result),
-                                     "tool_name": name})
+                                     "tool_name": name,
+                                     "tool_call_id": call.get("id")})
                     # A tool may have produced an IMAGE - look_at_screen
                     # does. The tool interface stays text-only; the picture
                     # is collected here and attached to the follow-up call,

@@ -48,14 +48,7 @@ class AnthropicProvider(ModelProvider):
 
     @staticmethod
     def supports_tools() -> bool:
-        """Tool calling is Ollama-only for now.
-
-        Said explicitly rather than left implicit: the tool layer asks
-        before attaching a schema, so with this provider selected Great
-        Sage answers from the model alone and does not pretend to have
-        run anything (spec S16).
-        """
-        return False
+        return True
 
     def _split(self, messages: List[Message]):
         """(system_text, conversation) in Anthropic's shape."""
@@ -66,9 +59,33 @@ class AnthropicProvider(ModelProvider):
             if role == "system":
                 system_parts.append(content)
             elif role == "tool":
-                # No tool role here; fold the result in as context.
-                convo.append({"role": "user",
-                              "content": "[tool result] " + str(content)})
+                # Anthropic expects a tool_result BLOCK inside a user
+                # turn, matched to the id of the call that produced it.
+                convo.append({"role": "user", "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": m.get("tool_call_id") or "call_1",
+                    "content": str(content)}]})
+            elif m.get("tool_calls"):
+                # Replay the assistant turn that asked for the tools, as
+                # tool_use blocks - without it the follow-up has no call
+                # for the results to attach to.
+                blocks = []
+                if content:
+                    blocks.append({"type": "text", "text": content})
+                for call in m["tool_calls"]:
+                    fn = call.get("function") or {}
+                    blocks.append({"type": "tool_use",
+                                   "id": call.get("id") or "call_1",
+                                   "name": fn.get("name"),
+                                   "input": fn.get("arguments") or {}})
+                convo.append({"role": "assistant", "content": blocks})
+            elif m.get("images"):
+                parts = [{"type": "text", "text": content or ""}]
+                for img in m["images"]:
+                    parts.append({"type": "image", "source": {
+                        "type": "base64", "media_type": "image/jpeg",
+                        "data": img}})
+                convo.append({"role": "user", "content": parts})
             else:
                 convo.append({"role": "assistant" if role == "assistant"
                               else "user", "content": content})
@@ -77,7 +94,18 @@ class AnthropicProvider(ModelProvider):
         merged = []
         for turn in convo:
             if merged and merged[-1]["role"] == turn["role"]:
-                merged[-1]["content"] += "\n\n" + turn["content"]
+                # Content is a string OR a list of blocks now (tool_use,
+                # tool_result, image). Merging blindly assumed strings and
+                # raised TypeError the moment a tool call was replayed, so
+                # normalise both sides before joining them.
+                prev, cur = merged[-1]["content"], turn["content"]
+                if isinstance(prev, str) and isinstance(cur, str):
+                    merged[-1]['content'] = prev + chr(10) + chr(10) + cur
+                else:
+                    def _blocks(c):
+                        return (c if isinstance(c, list)
+                                else [{'type': 'text', 'text': str(c)}])
+                    merged[-1]['content'] = _blocks(prev) + _blocks(cur)
             else:
                 merged.append(dict(turn))
         if not merged:
@@ -127,6 +155,47 @@ class AnthropicProvider(ModelProvider):
         except Exception as exc:
             raise ModelProviderError(
                 "Anthropic returned an unexpected response format.") from exc
+
+    def chat_raw(self, messages, tools=None):
+        """Ollama-shaped message dict, so one tool loop serves everything.
+
+        Anthropic returns a list of content BLOCKS - text and tool_use
+        mixed - rather than a message with a separate tool_calls field.
+        Flattening it here is what lets ChatEngine.send_with_tools stay
+        provider-agnostic.
+        """
+        body = self._body(messages, False)
+        if tools:
+            # Their schema is flatter than Ollama's function wrapper.
+            body["tools"] = [{
+                "name": t["function"]["name"],
+                "description": t["function"].get("description", ""),
+                "input_schema": t["function"].get("parameters")
+                                or {"type": "object", "properties": {}},
+            } for t in tools]
+        try:
+            r = requests.post(API_URL, headers=self._headers(), json=body,
+                              timeout=self.timeout)
+        except Exception as exc:
+            raise self._fail(exc) from exc
+        if r.status_code != 200:
+            raise self._fail(None, r)
+        try:
+            blocks = r.json().get("content") or []
+        except Exception as exc:
+            raise ModelProviderError(
+                "Anthropic returned an unexpected response format.") from exc
+        text = "".join(b.get("text", "") for b in blocks
+                       if b.get("type") == "text")
+        out = {"role": "assistant", "content": text}
+        calls = [b for b in blocks if b.get("type") == "tool_use"]
+        if calls:
+            out["tool_calls"] = [{
+                "id": c.get("id"),
+                "function": {"name": c.get("name"),
+                             "arguments": c.get("input") or {}}}
+                for c in calls]
+        return out
 
     def stream_response(self, messages: List[Message]) -> Iterator[str]:
         try:

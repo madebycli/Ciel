@@ -358,6 +358,33 @@ def _summarise_chat(provider, title, messages):
     return provider.send_message([{"role": "user", "content": prompt}]).strip()
 
 
+def _apply_voice_provider(voice):
+    """Point the voice engine at an API service, or leave it on F5.
+
+    Set on the engine rather than swapped for a different one: F5 owns the
+    voice lines, the effects chain and the sink handshake, and only the
+    step that turns text into audio changes. Falling back to F5 is always
+    safe and always says why - a voice that silently is not the one
+    selected is exactly what made the menu misleading.
+    """
+    try:
+        cfg = ai_settings.load(settings.AI_SETTINGS_PATH)
+        from great_sage.voice import api_tts
+        if api_tts.available(cfg):
+            provider = cfg.get("tts_provider")
+            key = (cfg.get("keys") or {}).get("tts", "")
+            voice.api_tts = (provider, key)
+            log.info("Voice: %s API (no local GPU work)", provider)
+        else:
+            voice.api_tts = None
+    except Exception:
+        log.exception("Could not apply the voice provider; staying on F5")
+        try:
+            voice.api_tts = None
+        except Exception:
+            pass
+
+
 def _apply_mode(engine, cfg, send_json=None):
     """Put a mode's limits into effect (spec S39/S40).
 
@@ -1259,6 +1286,7 @@ async def run_server(engine, voice) -> None:
                     active_connection["sink"] = sink
                     if voice is not None:
                         voice.set_sink(sink)
+                        _apply_voice_provider(voice)
                     # Attached images ride with this turn only. The
                     # vision model is the same qwen3.5:4b already loaded,
                     # so this costs no extra VRAM - verified by handing

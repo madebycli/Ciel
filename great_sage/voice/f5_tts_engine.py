@@ -426,6 +426,21 @@ class F5TTSVoiceOutput(VoiceOutput):
             joined = _np.concatenate([joined, gap, extra])
         return _pad_tail(joined, rate), rate
 
+    def _play_audio_bytes(self, data: bytes) -> None:
+        """Play audio the API returned, via the same path as a voice line."""
+        import os
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            self._play_audio_file(path)
+        finally:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+
     def _speak_tts_segment(self, text: str) -> None:
         """Generate and play in a producer/consumer pair.
 
@@ -439,6 +454,25 @@ class F5TTSVoiceOutput(VoiceOutput):
         the queue fills faster than playback drains it, so speech runs
         continuously instead of gapping between chunks.
         """
+        # An API voice replaces only the text-to-audio step. Everything
+        # else - voice lines, the effects chain, the sink handshake -
+        # stays exactly as it is, which is why this is a branch here
+        # rather than a different engine.
+        api = getattr(self, "api_tts", None)
+        if api:
+            provider, key = api
+            try:
+                from great_sage.voice import api_tts as _api
+                audio = _api.synthesize(provider, key, text)
+                setattr(self._sink, "pending_text", text)
+                self._play_audio_bytes(audio)
+                return
+            except VoiceError as exc:
+                # Say why, then speak it locally anyway. Silence would be
+                # a worse failure than the wrong voice.
+                log.warning("%s voice failed (%s); falling back to F5",
+                            provider, exc)
+
         # One clip for the whole segment when single-shot is on. No
         # chunk boundaries means no seams to gap, no effect tails cut at
         # a boundary, and no second audio element to race over.

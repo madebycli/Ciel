@@ -192,11 +192,15 @@ def build_provider(data, fallback):
                     "staying on the local model", want)
         return fallback, "Ollama / Local"
     try:
+        model = (data or {}).get("chat_model") or ""
         if want == "anthropic":
             from great_sage.models.anthropic_provider import AnthropicProvider
-            model = (data or {}).get("chat_model") or ""
             return (AnthropicProvider(api_key=key, model=model),
                     "Anthropic / Online")
+        if want == "openai":
+            from great_sage.models.openai_provider import OpenAIProvider
+            return (OpenAIProvider(api_key=key, model=model),
+                    "OpenAI / Online")
     except Exception:
         # Deliberately no exception text: it can echo request details.
         log.exception("Could not start the %r provider; staying local", want)
