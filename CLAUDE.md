@@ -28,9 +28,29 @@ Full history, environment quirks, and troubleshooting detail live in
 ## Run / test
 
 ```bash
-py main.py
+py app.py          # the real app - HUD, voice, tools
+py main.py         # the old CLI, still works
+py build.py        # packaged exe; runs the checks below first and
+                   # refuses to ship if any fail
 ```
 
-No automated test suite exists yet (see NOTES.md's technical-debt notes) -
-verify changes by running the app and checking behavior manually until
-one exists.
+Three checks exist and the build gates on them. Run them after touching
+what they cover:
+
+```bash
+py check_js.py         # the inline HUD script parses at all
+py check_shaders.py    # GLSL template literals are balanced
+py check_routing.py    # asking it to do something actually does it
+```
+
+`check_routing.py` matters most: the failure it guards is not a crash but
+a confident "I cannot do that" for something it can do. Several of its
+cases are transcripts of real requests that were refused. Add the phrasing
+to it whenever a request is mishandled - that is what stops the next
+change undoing the fix.
+
+Beyond those, verify by running the app. The Python core has no unit
+tests, and the HUD can only be checked by looking at it: `great_sage.log`
+(beside the exe, or in the project folder from source) is the first place
+to look when something is wrong, and page-side JavaScript errors are
+forwarded into it as PAGE ERROR.
