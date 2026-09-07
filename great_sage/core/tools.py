@@ -662,15 +662,61 @@ _PREROUTE = (
                  r"\b(list|show)\s+(my\s+)?(reminders|tasks|schedule)\b|"
                  r"\bwhat\s+reminders\b", _re.I),
      "list_tasks", {}),
+    # ASKING FOR A SEARCH IS NOT A REQUEST FOR AN OPINION.
+    #
+    # "look up who won the 2024 F1 championship" used no tools at all and
+    # answered from memory; "search the web for the latest news about the
+    # RTX 5090" made four calls, two of them about an unrelated anime, and
+    # then ignored what it had fetched. Whether a 4B model searches when
+    # told to search is a coin flip, and the failure mode is a confident
+    # answer with nothing behind it.
+    #
+    # So the search happens here, with the words the user actually used,
+    # and the model gets the results whether it would have asked for them
+    # or not. Same reasoning as the clock above.
+    (_re.compile(r"\b(?:search(?:\s+(?:the\s+)?(?:web|online|internet))?"
+                 r"\s+(?:for|about)|"
+                 r"search\s+(?:the\s+)?(?:web|internet|online)|"
+                 r"look\s+up|google|web\s?search)\s+(?P<q>.{2,200})",
+                 _re.I),
+     "web_search", lambda m: _search_args(m)),
 )
 
 
+# Things that are a SEARCH of this machine, not of the web. "find my
+# downloads folder" and "search for a file called notes" are the local
+# tools' job, and sending them to DuckDuckGo would be useless.
+_LOCAL_NOT_WEB = ("file", "folder", "directory", "downloads", "desktop",
+                  "documents", "on my pc", "on my computer", "my drive")
+
+
+def _search_args(m):
+    q = (m.group("q") or "").strip().strip("?.!,")
+    if len(q) < 2:
+        return None
+    low = q.lower()
+    if any(w in low for w in _LOCAL_NOT_WEB):
+        return None
+    return {"query": q}
+
+
 def preroute(text: str):
-    """[(tool_name, args)] to run before asking the model, or []."""
+    """[(tool_name, args)] to run before asking the model, or [].
+
+    An entry's args may be a dict, or a callable taking the match and
+    returning one - which is what lets a search route carry the actual
+    query. Returning None from that callable skips the entry, for the
+    cases a regex alone cannot separate.
+    """
     out = []
     for pattern, name, args in _PREROUTE:
-        if pattern.search(text or ""):
-            out.append((name, dict(args)))
+        m = pattern.search(text or "")
+        if not m:
+            continue
+        built = args(m) if callable(args) else dict(args)
+        if built is None:
+            continue
+        out.append((name, built))
     return out
 
 

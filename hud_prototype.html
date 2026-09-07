@@ -4199,7 +4199,7 @@ Hey Ciel</textarea>
     const wasMini = miniMode;
     miniMode = on;
     if (on) {
-      if (!wasMini) playSfx('overlayAppear');
+      if (!wasMini) playSfxWhenVisible('overlayAppear');
       enforceMiniVisibility();
     } else {
       worldGroup.children.forEach((child) => { child.visible = true; });
@@ -4858,6 +4858,7 @@ const MINI_CHAT_PAD = 3;
   const SFX_FILES = {
     startup:       'assets/sfx/Startup.wav',
     coreOpen:      'assets/sfx/core_UI_open.wav',
+    coreClose:     'assets/sfx/Core_UI_Close.wav',
     panelOpen:     'assets/sfx/Main_UI_Open.wav',
     panelClose:    'assets/sfx/Main_UI_Close.wav',
     overlayAppear: 'assets/sfx/Overlay_apear.wav',
@@ -4896,6 +4897,17 @@ const MINI_CHAT_PAD = 3;
     else if (aiThinking) setSfxThinking(true);
   });
 
+  // Reported to the server once BOTH the clips have settled and the
+  // socket is up, in whichever order those happen.
+  let sfxLoadResult = null;
+  function sfxReport() {
+    if (!sfxLoadResult || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'sfx_ready',
+                             loaded: sfxLoadResult.ready,
+                             total: sfxLoadResult.total }));
+    sfxLoadResult.sent = true;
+  }
+
   function sfxPreload() {
     const names = Object.keys(SFX_FILES);
     let ready = 0;
@@ -4908,9 +4920,9 @@ const MINI_CHAT_PAD = 3;
         el._sfxSettled = true;
         done++;
         if (ok) ready++;
-        if (done === names.length && ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'sfx_ready',
-                                   loaded: ready, total: names.length }));
+        if (done === names.length) {
+          sfxLoadResult = { ready: ready, total: names.length, sent: false };
+          sfxReport();
         }
       };
       el.addEventListener('canplaythrough', () => settle(true));
@@ -4918,6 +4930,12 @@ const MINI_CHAT_PAD = 3;
       try { el.load(); } catch (err) { settle(false); }
     });
   }
+
+  // Started HERE, at page load, not when the websocket opens. The socket
+  // comes up well after the startup sequence has already asked its sound
+  // to play, which left the very first clip loading from cold at exactly
+  // the moment it was needed.
+  sfxPreload();
 
   // One element per sound, rewound rather than cloned. Retriggering a UI
   // sound before it has finished means the thing it describes happened
@@ -4932,16 +4950,78 @@ const MINI_CHAT_PAD = 3;
     try { return !document.hidden; } catch (err) { return true; }
   }
 
-  function playSfx(name) {
-    if (!sfxEnabled || !sfxAudible()) return;
-    const el = sfxGet(name);
-    if (!el) return;
+  function sfxStart(el) {
     try {
       el.volume = sfxVolume;
       el.currentTime = 0;
       const p = el.play();
       if (p && p.catch) p.catch(() => {});
     } catch (err) { /* a missing or undecodable clip must not break the UI */ }
+  }
+
+  // For a sound that belongs to a window APPEARING. The overlay window
+  // is created hidden on purpose - so the full-size HUD never flashes
+  // while its scene builds - and it asks to play its arrival sound from
+  // applyMiniMode, which runs while it is still hidden. sfxAudible() is
+  // false at that instant, so the sound was correctly suppressed by the
+  // rule that stops the hidden main HUD doubling every sound, and the
+  // overlay arrived in silence.
+  //
+  // Wait for the window to actually come up, then play. Capped, so a
+  // window that never appears does not fire a sound later out of
+  // nowhere.
+  function playSfxWhenVisible(name) {
+    if (!document.hidden) { playSfx(name); return; }
+    let timer = null;
+    const onVis = () => {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', onVis);
+      if (timer) clearTimeout(timer);
+      playSfx(name);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    timer = setTimeout(() => {
+      document.removeEventListener('visibilitychange', onVis);
+    }, 15000);
+  }
+
+  function playSfx(name) {
+    if (!sfxEnabled || !sfxAudible()) return;
+    // In overlay form, only the arrival sound and the thinking bed (the
+    // bed is started through setSfxThinking, not here). The overlay sits
+    // on top of a game for a whole session, and a sound on every menu
+    // movement would wear out fast. The main HUD keeps all of them.
+    if (miniMode && name !== 'overlayAppear') return;
+    const el = sfxGet(name);
+    if (!el) return;
+    // readyState 3 is HAVE_FUTURE_DATA. The two sounds that fire during
+    // start-up - the startup sequence, and the overlay's arrival as its
+    // window comes up - ask to play while their clip is still loading,
+    // and play() on an unbuffered element does nothing at all and
+    // reports no error. That is exactly why the startup sound was silent
+    // on launch but worked from Replay Startup, where the clip was
+    // already cached.
+    //
+    // So wait for it, once, briefly. The cap matters: without it a sound
+    // requested during a slow load could arrive long after the moment it
+    // belonged to, which is worse than not playing.
+    if (el.readyState < 3) {
+      if (el._sfxWaiting) return;
+      el._sfxWaiting = true;
+      let timer = null;
+      const done = (play) => {
+        el._sfxWaiting = false;
+        el.removeEventListener('canplay', onReady);
+        if (timer) clearTimeout(timer);
+        if (play) sfxStart(el);
+      };
+      const onReady = () => done(true);
+      el.addEventListener('canplay', onReady);
+      timer = setTimeout(() => done(false), 4000);
+      try { el.load(); } catch (err) { }
+      return;
+    }
+    sfxStart(el);
   }
 
   // The thinking bed loops under the outer ring while Great Sage works.
@@ -4955,6 +5035,10 @@ const MINI_CHAT_PAD = 3;
     el.loop = true;
     if (sfxFadeTimer) { clearInterval(sfxFadeTimer); sfxFadeTimer = null; }
     if (on) {
+      // The bed DOES play in overlay form. The menu sounds do not - see
+      // playSfx - because those fire on every click and would wear out
+      // over a session; this one only runs while Great Sage is actually
+      // working, which is exactly when the overlay should feel alive.
       if (!sfxEnabled || !sfxAudible()) return;
       try {
         el.volume = sfxVolume;
@@ -5448,7 +5532,7 @@ const MINI_CHAT_PAD = 3;
           role: IS_STANDALONE_OVERLAY ? 'overlay'
                 : (PANEL_WINDOW ? ('panel:' + PANEL_WINDOW) : 'hud'),
         }));
-        sfxPreload();
+        sfxReport();
       } catch (err) { /* the socket just opened; nothing useful to do */ }
     });
     ws.addEventListener('close', () => {
@@ -7293,7 +7377,11 @@ const MINI_CHAT_PAD = 3;
     }, 940));
   }
 
-  function closeWheel() {
+  function closeWheel(silent) {
+    // silent: the menu is closing BECAUSE something is opening in its
+    // place, and that thing plays its own sound. Stacking both on one
+    // click just sounds like a mistake.
+    if (!silent) playSfx('coreClose');
     wheelOutline.style.width = '0';
     wheelOutline.style.height = '0';
     wheelOutline.classList.remove('expand');
@@ -7325,7 +7413,11 @@ const MINI_CHAT_PAD = 3;
       if (!wheelOpen) wheelLinks.innerHTML = '';
     }, 260);
   }
-  wheelCloseBtn.addEventListener('click', closeWheel);
+  // Wrapped, NOT passed directly: addEventListener hands the listener a
+  // MouseEvent, which arrived as closeWheel's "silent" argument and was
+  // truthy - so the exit button was the one path that silenced its own
+  // sound. Escape worked because it calls closeWheel() with nothing.
+  wheelCloseBtn.addEventListener('click', () => closeWheel());
 
   // The panel used to close itself after 10s of no interaction inside it.
   // That's gone: it stays open until it's actually dismissed - the X, the
@@ -7548,7 +7640,7 @@ const MINI_CHAT_PAD = 3;
     if (node) node.textContent = miniMode ? 'ENLARGE' : 'OVERLAY';
   }
   function enterMini() {
-    if (typeof closeWheel === 'function' && wheelOpen) closeWheel();
+    if (typeof closeWheel === 'function' && wheelOpen) closeWheel(true);
     // Overlay mode is a SEPARATE PROCESS now, so this window does not
     // switch modes - it just hides while that process is up.
     //
@@ -7682,7 +7774,7 @@ const MINI_CHAT_PAD = 3;
   wheelItems.forEach((item) => {
     item.addEventListener('click', () => {
       const target = item.dataset.target;
-      closeWheel();
+      closeWheel(true);      // the panel or the overlay sounds instead
       if (target !== 'overlay') playSfx('panelOpen');
       if (target === 'overlay') {
         // Same node both ways - in the overlay it is the way back out,
