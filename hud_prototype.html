@@ -4298,6 +4298,32 @@ Hey Ciel</textarea>
     // registers as a change; titleChanged only fires on a change.
     setTimeout(() => { document.title = 'GS_OVERLAY_READY'; }, 60);
   }
+
+  // Tell the overlay host how much of its window has to accept clicks.
+  //
+  // The overlay is a 340px square that is nearly all transparent, and an
+  // always-on-top window swallows every click inside its rectangle -
+  // which is why the browser tabs underneath could not be clicked. The
+  // host makes everything except the core click-through; this says when
+  // that is not enough, because the radial menu and the speech bubble
+  // both reach well past the core.
+  //
+  // Only meaningful in the standalone overlay - the Qt host is the only
+  // thing listening, and this is its channel.
+  let lastHitRegion = null;
+  function setHostHitRegion(all) {
+    if (!IS_STANDALONE_OVERLAY || all === lastHitRegion) return;
+    lastHitRegion = all;
+    document.title = all ? 'GS_HIT_ALL' : 'GS_HIT_CORE';
+    // Put the title back. It IS the window's title, so leaving a sentinel
+    // in it renames the window - which breaks anything that identifies the
+    // overlay by name, and is why this signal could not be tested at
+    // first. Restored to a neutral string the host ignores, NOT to
+    // GS_OVERLAY_READY: that one makes the host re-place the window at
+    // the top right, which would yank the overlay back every time the
+    // menu opened.
+    setTimeout(() => { document.title = 'GreatSageOverlay'; }, 50);
+  }
   window.__isStandaloneOverlay = IS_STANDALONE_OVERLAY;
 
   // ---------------- Overlay reply bubble ----------------
@@ -4323,6 +4349,13 @@ const MINI_CHAT_PAD = 3;
       link: document.getElementById('mini-chat-link'),
       text: document.getElementById('mini-chat-text'),
     };
+  }
+
+  function miniChatShowing() {
+    try {
+      const { box } = miniChatEls();
+      return !!(box && box.classList.contains('show'));
+    } catch (err) { return false; }
   }
 
   function placeMiniChat() {
@@ -4366,6 +4399,7 @@ const MINI_CHAT_PAD = 3;
     span.textContent = text;
     box.classList.add('show');
     link.classList.add('show');
+    setHostHitRegion(true);      // the bubble sits outside the core
     // Measured after the text is in, or offsetWidth is the old size and
     // the bubble lands a few pixels off.
     placeMiniChat();
@@ -4377,6 +4411,8 @@ const MINI_CHAT_PAD = 3;
     const { box, link } = miniChatEls();
     if (box) box.classList.remove('show');
     if (link) link.classList.remove('show');
+    // Back to core-only, unless the menu is still open over it.
+    setHostHitRegion(!!wheelOpen);
   }
   window.__showMiniChat = showMiniChat;
   window.__hideMiniChat = hideMiniChat;
@@ -7382,6 +7418,7 @@ const MINI_CHAT_PAD = 3;
   }
 
   function openWheel() {
+    setHostHitRegion(true);    // the menu reaches the window's edges
     if (wheelOpen) return;
     wheelOpen = true;
     wheelOpening = true;
@@ -7418,6 +7455,8 @@ const MINI_CHAT_PAD = 3;
   }
 
   function closeWheel(silent) {
+    // Back to core-only, unless the bubble is still up.
+    setHostHitRegion(miniChatShowing());
     // silent: the menu is closing BECAUSE something is opening in its
     // place, and that thing plays its own sound. Stacking both on one
     // click just sounds like a mistake.

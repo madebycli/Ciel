@@ -45,7 +45,7 @@ import os
 import sys
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QGuiApplication, QSurfaceFormat
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QSurfaceFormat
 from PySide6.QtWidgets import QApplication
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
@@ -98,6 +98,32 @@ MARGIN = 8
 # host does not accept a drag.
 HANDLE_INSET_RIGHT, HANDLE_TOP, HANDLE_W, HANDLE_H = 48, 2, 26, 26
 
+# ---- click-through -------------------------------------------------
+# The overlay is a 340px SQUARE, but almost all of it is transparent - the
+# visual inside is a core with a wireframe around it. Krazaa could not
+# click the browser tabs underneath, because an always-on-top window eats
+# every click that lands anywhere in its rectangle, visible or not.
+#
+# So the window is click-through EXCEPT where there is something to hit.
+# WS_EX_TRANSPARENT does that at the OS level: clicks fall through to
+# whatever is behind.
+#
+# It has to be POLLED rather than driven by mouse events, and that is not
+# laziness: a click-through window receives no mouse events at all, so
+# once it is transparent nothing would ever tell it the cursor had come
+# back. The cursor position is global, so a timer can see it regardless.
+CLICK_THROUGH_POLL_MS = 50
+WS_EX_TRANSPARENT = 0x00000020
+GWL_EXSTYLE = -20
+# Fraction of the window's width, from the centre, that counts as the
+# core. Big enough to click without aiming, small enough that the corners
+# - which is where the tabs and buttons underneath are - stay usable.
+CORE_HIT_FRACTION = 0.26
+# The page says when the whole window must be live: the radial menu is
+# open, or the speech bubble is showing. Both extend well past the core.
+HIT_ALL_SENTINEL = "GS_HIT_ALL"
+HIT_CORE_SENTINEL = "GS_HIT_CORE"
+
 
 class OverlayView(QWebEngineView):
     """Frameless, always-on-top, transparent, dragged by its handle."""
@@ -129,12 +155,74 @@ class OverlayView(QWebEngineView):
         # filter is installed once the page has loaded (and again on show).
         self.loadFinished.connect(lambda _ok: self._install_mouse_filter())
 
+        # Click-through state. Starts None so the first poll always
+        # applies a style rather than assuming one.
+        self._hit_all = False
+        self._placed = False
+        self._click_through = None
+        self._ct_timer = QTimer(self)
+        self._ct_timer.timeout.connect(self._update_click_through)
+        self._ct_timer.start(CLICK_THROUGH_POLL_MS)
+
+    # ---- click-through --------------------------------------------
+    def _interactive_at(self, gpos) -> bool:
+        """Is there anything to hit at this screen position?"""
+        if self._hit_all:
+            return True
+        top = self.frameGeometry().topLeft()
+        x, y = gpos.x() - top.x(), gpos.y() - top.y()
+        w, h = self.width(), self.height()
+        if not (0 <= x <= w and 0 <= y <= h):
+            return False
+        # The drag handle and the exit cross, both top-right.
+        hx = w - HANDLE_INSET_RIGHT
+        if hx <= x <= hx + HANDLE_W and HANDLE_TOP <= y <= HANDLE_TOP + HANDLE_H:
+            return True
+        if x >= w - 24 and y <= 24:
+            return True
+        # The core itself.
+        dx, dy = x - w / 2.0, y - h / 2.0
+        r = w * CORE_HIT_FRACTION
+        return (dx * dx + dy * dy) <= r * r
+
+    def _set_click_through(self, on: bool):
+        if on == self._click_through:
+            return
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            u = ctypes.windll.user32
+            get_l = getattr(u, "GetWindowLongPtrW", None) or u.GetWindowLongW
+            set_l = getattr(u, "SetWindowLongPtrW", None) or u.SetWindowLongW
+            style = get_l(hwnd, GWL_EXSTYLE)
+            style = (style | WS_EX_TRANSPARENT) if on else (style & ~WS_EX_TRANSPARENT)
+            set_l(hwnd, GWL_EXSTYLE, style)
+            self._click_through = on
+        except Exception:
+            # Never fatal: worst case the overlay keeps eating clicks,
+            # which is how it behaved before this existed.
+            pass
+
+    def _update_click_through(self):
+        if not self.isVisible():
+            return
+        self._set_click_through(not self._interactive_at(QCursor.pos()))
+
     # ---- page -> host ---------------------------------------------
     def _on_title(self, title: str):
         if title.strip() == READY_SENTINEL:
             # Placed and shown only now, so the first frame the user sees
             # is already the overlay.
-            place_top_right(self, self.width())
+            #
+            # ONCE. This sentinel arrives again every time the page asks
+            # for a panel window - requestPanelWindow restores the title to
+            # it deliberately, so that asking for the same section twice
+            # still registers as a change. Re-placing on those would snap
+            # the overlay back to the top right corner every time Master
+            # opened settings, throwing away wherever he had dragged it.
+            if not self._placed:
+                self._placed = True
+                place_top_right(self, self.width())
             self.show()
             _apply_ws_border(self)
             self._install_mouse_filter()
@@ -143,6 +231,12 @@ class OverlayView(QWebEngineView):
             section = title.strip()[len(OPEN_PANEL_PREFIX):].strip()
             if section:
                 _spawn_panel(section)
+            return
+        if title.strip() == HIT_ALL_SENTINEL:
+            self._hit_all = True
+            return
+        if title.strip() == HIT_CORE_SENTINEL:
+            self._hit_all = False
             return
         if title.strip() == EXIT_SENTINEL:
             # Exit code 0 tells the launcher this was a deliberate switch
