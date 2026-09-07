@@ -53,6 +53,8 @@ MOD_CONTROL = 0x0002
 MOD_SHIFT = 0x0004
 MOD_NOREPEAT = 0x4000          # do not fire repeatedly while held
 WM_HOTKEY = 0x0312
+# How often to try again for a combination someone else holds.
+RETRY_SECONDS = 5.0
 
 _MODS = {"ctrl": MOD_CONTROL, "control": MOD_CONTROL,
          "alt": MOD_ALT, "shift": MOD_SHIFT}
@@ -88,10 +90,14 @@ class GlobalHotkey:
     # talking. Releasing on our own is far better than recording for ever.
     MAX_HOLD_S = 120.0
 
-    def __init__(self, binding: str, on_press, on_release=None):
+    def __init__(self, binding: str, on_press, on_release=None,
+                 on_active=None):
         self.binding = binding
         self._on_press = on_press
         self._on_release = on_release
+        # Called with True if the key is claimed LATER, after start() had
+        # already reported failure. Without it a recovery is invisible.
+        self._on_active = on_active
         self._thread = None
         self._stop = threading.Event()
         self.active = False
@@ -153,18 +159,43 @@ class GlobalHotkey:
 
     def _run(self, mods, key):
         user32 = ctypes.windll.user32
-        if not user32.RegisterHotKey(None, 1, mods, key):
-            # Almost always means another application already owns it.
-            log.warning("Could not register the global hotkey %r - another "
-                        "application may already be using it", self.binding)
-            self._ok = False
-            self._ready.set()
+        # KEEP TRYING. A failed registration used to end this thread, which
+        # meant the voice key was dead for the entire session with nothing
+        # visible to say why - and the usual cause is temporary: another
+        # copy of Great Sage still shutting down, or some other app holding
+        # the combination for a moment. Krazaa hit exactly that; the app
+        # was running, reported a healthy start, and nothing owned the key
+        # at all because the one attempt had already failed and gone.
+        attempts = 0
+        while not self._stop.is_set():
+            if user32.RegisterHotKey(None, 1, mods, key):
+                break
+            attempts += 1
+            if attempts == 1:
+                log.warning("Could not register the global hotkey %r - "
+                            "another application may be using it; retrying "
+                            "every %.0fs", self.binding, RETRY_SECONDS)
+                self._ok = False
+                self._ready.set()       # let start() report the failure now
+            self._stop.wait(RETRY_SECONDS)
+        if self._stop.is_set():
+            self.active = False
             return
         self.active = True
         self._ok = True
         self._ready.set()
+        if attempts:
+            log.info("Global hotkey %r registered after %d retr%s",
+                     self.binding, attempts, "y" if attempts == 1 else "ies")
         log.info("Global hotkey active: %s (works from any window)",
                  self.binding)
+        # Anything watching (the settings panel) is told, because start()
+        # already reported a failure and would otherwise never be corrected.
+        if attempts and self._on_active is not None:
+            try:
+                self._on_active(True)
+            except Exception:
+                log.exception("Global hotkey state callback failed")
         # SHORT, and the sign bit is the one we want - without an explicit
         # restype ctypes hands back a 32-bit int and the test misreads.
         user32.GetAsyncKeyState.restype = ctypes.c_short
@@ -214,6 +245,7 @@ class GlobalHotkey:
             # mid-hold - on rebind, on shutdown, on anything.
             if held:
                 fire(self._on_release, "release")
-            user32.UnregisterHotKey(None, 1)
+            if self.active:
+                user32.UnregisterHotKey(None, 1)
             self.active = False
             log.info("Global hotkey released")

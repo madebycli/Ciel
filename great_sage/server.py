@@ -1097,8 +1097,25 @@ async def run_server(engine, voice) -> None:
     if getattr(settings, "GLOBAL_HOTKEY", ""):
         try:
             from great_sage.core.global_hotkey import GlobalHotkey
+            def _on_hotkey_active(active):
+                # The key was claimed on a retry, after start() had already
+                # reported failure. Correct the panel, which is otherwise
+                # left saying the key could not be registered for ever.
+                ws_c = active_connection["websocket"]
+                if ws_c is None or _hotkey is None:
+                    return
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        ws_c.send(json.dumps({
+                            "type": "hotkey_status",
+                            "binding": _hotkey.binding,
+                            "active": bool(active),
+                        })), loop)
+                except Exception:
+                    pass
+
             _hotkey = GlobalHotkey(_ptt_binding(), _hotkey_press,
-                                   _hotkey_release)
+                                   _hotkey_release, _on_hotkey_active)
             _hotkey.start()
         except Exception:
             log.exception("Global hotkey unavailable")
