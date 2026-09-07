@@ -41,6 +41,22 @@ MUST = [
     ("play bohemian rhapsody on youtube", "open_url", "bohemian"),
     ("youtube search for cat videos", "open_url", "cat"),
     ("find gundam openings on youtube", "open_url", "gundam"),
+    # Verbatim, and the one that broke it: "opening" contains "open", and
+    # matching verbs as substrings searched for "ing by tactic and click on
+    # the first link or option".
+    ("Search on YouTube. That time I got reincarnated as a slime season 4 "
+     "opening by tactic and click on the first link or option",
+     "open_url", "that+time+i+got"),
+    ("Search on YouTube. That time I got reincarnated as a slime season 4 "
+     "opening by tactic and click on the first link or option",
+     "open_url", "season+4+opening+by+tactic"),
+    # The trailing instruction must be dropped...
+    ("search youtube for rimuru fight scenes and play the first one",
+     "open_url", "=https://www.youtube.com/results?search_query=rimuru+fight+scenes"),
+    # ...but NOT when the same-looking clause is what introduces the query.
+    ("I say like could you like search on YouTube for me and open up that "
+     "time I got reincarnated as a slime season for opening tactic video",
+     "open_url", "reincarnated"),
     ("search on youtube for lofi beats", "open_url", "youtube.com"),
 
     # VERBATIM from great_sage.log - what Krazaa actually said out loud,
@@ -58,7 +74,6 @@ MUST = [
     # the search into "time I got reincarnated...".
     ("Could you open YouTube and search up that time I got reincarnated "
      "as a slime season 4 opening", "open_url", "that+time"),
-    ("find gundam openings on youtube", "open_url", "gundam"),
 
     # --- opening things ---
     ("open spotify", "open_application", "spotify"),

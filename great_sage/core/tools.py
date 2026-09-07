@@ -728,6 +728,65 @@ _YT_NOT_A_REQUEST = ("is youtube down", "what is youtube", "who owns youtube",
                      "how does youtube")
 
 
+# Trailing instructions. "...season 4 opening by tactic AND CLICK ON THE
+# FIRST LINK" - everything from there on is telling Great Sage what to do
+# next, not part of what to look for.
+_YT_TAIL_CLAUSE = _re.compile(
+    r"\s+(?:and|then|also|plz|please)\s+"
+    r"(?:click|press|play|open|pick|choose|select|hit|tap)\b",
+    _re.I)
+
+# How far into a segment a verb may appear and still be read as the verb
+# INTRODUCING the query. Past that it is part of a trailing instruction:
+# "search youtube for rimuru fight scenes and PLAY the first one" - the
+# query is already over by then.
+_YT_VERB_WINDOW = 30
+# Below this, a query is not a query - it is what is left after cutting in
+# the wrong place. See _after_verb.
+_YT_MIN_QUERY = 8
+
+
+def _after_verb(segment):
+    """The search terms in a segment, without the words wrapped around them.
+
+    Three things this has to get right, all learned from real utterances:
+
+      - Word boundaries. A plain substring search found "open" inside
+        "opening" and cut Krazaa's request in half: asked for "...season 4
+        opening by tactic", it searched for "ing by tactic and click on
+        the first link or option".
+
+      - Order. The trailing instruction comes off BEFORE looking for a
+        verb, or the "play" in "...and play the first one" is mistaken for
+        the verb introducing the query and everything before it is lost.
+
+      - When NOT to cut. "search on YouTube for me AND OPEN UP that time I
+        got reincarnated..." looks identical to a trailing instruction and
+        is the opposite: the clause introduces the subject. Telling them
+        apart by grammar is a losing game, so it is decided by result - a
+        cut that leaves almost nothing behind was the wrong cut.
+    """
+    if not segment:
+        return ""
+
+    def extract(seg):
+        best = None
+        for v in _YT_VERBS:
+            m = _re.search(r"\b" + _re.escape(v) + r"\b", seg, _re.I)
+            if m and m.start() <= _YT_VERB_WINDOW and (
+                    best is None or m.start() < best.start()):
+                best = m
+        out = seg[best.end():] if best else seg
+        return out.strip().strip("?.!,")
+
+    tail = _YT_TAIL_CLAUSE.search(segment)
+    if tail:
+        trimmed = extract(segment[:tail.start()])
+        if len(trimmed) >= _YT_MIN_QUERY:
+            return trimmed
+    return extract(segment)
+
+
 def _youtube_query(text):
     """The thing to search for, out of a spoken sentence.
 
@@ -752,27 +811,13 @@ def _youtube_query(text):
         return ""
     i = low.index("youtube") + len("youtube")
     rest = raw[i:]
-    rlow = rest.lower()
-    best = None
-    for v in _YT_VERBS:
-        j = rlow.find(v)
-        if j >= 0 and (best is None or j < best[0]):
-            best = (j, v)
-    q = rest[best[0] + len(best[1]):] if best else rest
-    q = q.strip().strip("?.!,")
+    q = _after_verb(rest)
     if not q:
         # Nothing after the word - the query came first, as in "play
         # bohemian rhapsody ON youtube". Take what sits between the verb
         # and the word itself.
         head = raw[:low.index("youtube")]
-        hlow = head.lower()
-        hbest = None
-        for v in _YT_VERBS:
-            j = hlow.find(v)
-            if j >= 0 and (hbest is None or j < hbest[0]):
-                hbest = (j, v)
-        q = (head[hbest[0] + len(hbest[1]):] if hbest else head)
-        q = q.strip().strip("?.!,")
+        q = _after_verb(head)
         changed = True
         while changed and q:
             changed = False
