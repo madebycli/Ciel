@@ -2042,6 +2042,13 @@ body.mini:hover #mini-exit { opacity: 1; }
       </label>
 
       <label>
+        <input type="checkbox" id="ui-sfx-toggle" checked>
+        Interface sounds (movement, panels, overlay)
+      </label>
+      <label class="slider-label">Interface sound volume</label>
+      <input type="range" id="ui-sfx-volume" min="0" max="100" value="70">
+
+      <label>
         <input type="checkbox" id="startup-greeting-toggle" checked>
         Play "Good morning" greeting on startup
       </label>
@@ -4189,8 +4196,10 @@ Hey Ciel</textarea>
   }
 
   function applyMiniMode(on) {
+    const wasMini = miniMode;
     miniMode = on;
     if (on) {
+      if (!wasMini) playSfx('overlayAppear');
       enforceMiniVisibility();
     } else {
       worldGroup.children.forEach((child) => { child.visible = true; });
@@ -4834,6 +4843,144 @@ const MINI_CHAT_PAD = 3;
   // instead of the canned fake envelope, which had no relationship to a
   // given clip's real length or loudness.
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  // ---------- Interface sounds ----------
+  // Krazaa's own mechanical movement sounds, one per thing the visuals
+  // do, so the HUD sounds like it is moving rather than just looking
+  // like it.
+  //
+  // HTMLAudioElement, NOT fetch + decodeAudioData. The page is loaded
+  // from file:// in both hosts, where fetch of a sibling file is blocked
+  // by the origin rules but media loading is not - the same reason
+  // three.js is a <script src> and not fetched. Both hosts already run
+  // with --autoplay-policy=no-user-gesture-required, which is what lets
+  // the startup sound play before anything has been clicked.
+  const SFX_FILES = {
+    startup:       'assets/sfx/Startup.wav',
+    coreOpen:      'assets/sfx/core_UI_open.wav',
+    panelOpen:     'assets/sfx/Main_UI_Open.wav',
+    panelClose:    'assets/sfx/Main_UI_Close.wav',
+    overlayAppear: 'assets/sfx/Overlay_apear.wav',
+    thinking:      'assets/sfx/AI_Thinking_idle.wav',
+  };
+  let sfxEnabled = true;
+  let sfxVolume = 0.7;
+  const sfxPool = {};
+
+  function sfxGet(name) {
+    if (!sfxPool[name]) {
+      const path = SFX_FILES[name];
+      if (!path) return null;
+      const el = new Audio(path);
+      el.preload = 'auto';
+      // A clip that cannot be found or decoded is otherwise perfectly
+      // silent - play() rejects, the catch swallows it, and the only
+      // symptom is a sound that never happens. Say so instead.
+      el.addEventListener('error', () => {
+        const code = (el.error && el.error.code) || '?';
+        reportPageError('interface sound failed to load',
+                        name + ' (' + path + ') mediaError=' + code);
+      });
+      sfxPool[name] = el;
+    }
+    return sfxPool[name];
+  }
+
+  // Load them all up front, and report what actually decoded. These are
+  // 24-bit WAVs; if a host ever refuses that format the whole set goes
+  // quiet at once, and this is what tells us rather than silence.
+  document.addEventListener('visibilitychange', () => {
+    // Hidden mid-reply: drop the bed, the overlay is carrying it now.
+    // Shown again while still thinking: pick it back up.
+    if (document.hidden) setSfxThinking(false);
+    else if (aiThinking) setSfxThinking(true);
+  });
+
+  function sfxPreload() {
+    const names = Object.keys(SFX_FILES);
+    let ready = 0;
+    let done = 0;
+    names.forEach((n) => {
+      const el = sfxGet(n);
+      if (!el) { done++; return; }
+      const settle = (ok) => {
+        if (el._sfxSettled) return;
+        el._sfxSettled = true;
+        done++;
+        if (ok) ready++;
+        if (done === names.length && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'sfx_ready',
+                                   loaded: ready, total: names.length }));
+        }
+      };
+      el.addEventListener('canplaythrough', () => settle(true));
+      el.addEventListener('error', () => settle(false));
+      try { el.load(); } catch (err) { settle(false); }
+    });
+  }
+
+  // One element per sound, rewound rather than cloned. Retriggering a UI
+  // sound before it has finished means the thing it describes happened
+  // again, and hearing the new one is more correct than layering it on
+  // top of the old one.
+  // A hidden window must stay silent. Entering overlay mode HIDES the
+  // main HUD rather than closing it, so both pages are live at once -
+  // without this every interface sound and the whole thinking bed would
+  // play twice, a few milliseconds apart, which sounds like a fault.
+  // This is also what keeps a minimised HUD quiet.
+  function sfxAudible() {
+    try { return !document.hidden; } catch (err) { return true; }
+  }
+
+  function playSfx(name) {
+    if (!sfxEnabled || !sfxAudible()) return;
+    const el = sfxGet(name);
+    if (!el) return;
+    try {
+      el.volume = sfxVolume;
+      el.currentTime = 0;
+      const p = el.play();
+      if (p && p.catch) p.catch(() => {});
+    } catch (err) { /* a missing or undecodable clip must not break the UI */ }
+  }
+
+  // The thinking bed loops under the outer ring while Great Sage works.
+  // Faded rather than cut: the reply can land at any point in a 7.5s
+  // mechanical loop, and stopping dead mid-movement is audible in a way
+  // that a quarter-second fade is not.
+  let sfxFadeTimer = null;
+  function setSfxThinking(on) {
+    const el = sfxGet('thinking');
+    if (!el) return;
+    el.loop = true;
+    if (sfxFadeTimer) { clearInterval(sfxFadeTimer); sfxFadeTimer = null; }
+    if (on) {
+      if (!sfxEnabled || !sfxAudible()) return;
+      try {
+        el.volume = sfxVolume;
+        if (el.paused) { el.currentTime = 0; const p = el.play(); if (p && p.catch) p.catch(() => {}); }
+      } catch (err) { }
+      return;
+    }
+    if (el.paused) return;
+    const step = sfxVolume / 8;
+    sfxFadeTimer = setInterval(() => {
+      try {
+        if (el.volume > step) {
+          el.volume = Math.max(0, el.volume - step);
+        } else {
+          el.pause();
+          el.volume = sfxVolume;
+          clearInterval(sfxFadeTimer);
+          sfxFadeTimer = null;
+        }
+      } catch (err) {
+        clearInterval(sfxFadeTimer);
+        sfxFadeTimer = null;
+      }
+    }, 30);
+  }
+
   const analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
   analyser.smoothingTimeConstant = 0.6;
@@ -4940,6 +5087,7 @@ const MINI_CHAT_PAD = 3;
   // sent until the first reply_chunk comes back - drives the outer cube
   // ring's "thinking" spin in animate() below.
   let aiThinking = false;
+  let sfxThinkingWas = false;   // see the transition test in animate()
 
   function base64ToBlob(base64, mime) {
     const byteChars = atob(base64);
@@ -5300,6 +5448,7 @@ const MINI_CHAT_PAD = 3;
           role: IS_STANDALONE_OVERLAY ? 'overlay'
                 : (PANEL_WINDOW ? ('panel:' + PANEL_WINDOW) : 'hud'),
         }));
+        sfxPreload();
       } catch (err) { /* the socket just opened; nothing useful to do */ }
     });
     ws.addEventListener('close', () => {
@@ -6189,6 +6338,13 @@ const MINI_CHAT_PAD = 3;
     // and the new unfocused 12fps cap sat in the same zone. Raising it
     // to the value dt already guarantees makes every cap animate at real
     // time, while the multi-second-gap guard stays exactly where it was.
+    // The thinking bed follows aiThinking from here, not from the many
+    // places that assign it: a single transition test cannot be missed
+    // by a later edit, and the flag is already read in this loop.
+    if (aiThinking !== sfxThinkingWas) {
+      sfxThinkingWas = aiThinking;
+      setSfxThinking(aiThinking);
+    }
     const frameScale = Math.min(6, dt * 60);
     // t is this scene's master phase - most shader and motion timing reads
     // it. Advancing it by frameScale rather than a flat 0.01 is what makes
@@ -7188,6 +7344,7 @@ const MINI_CHAT_PAD = 3;
   }
   function closeCenterPanel() {
     if (!centerPanelOverlay.classList.contains('open')) return;
+    playSfx('panelClose');
     // Keep .open through the whole reverse animation and only drop it
     // once the bar has actually finished collapsing back to a line.
     centerPanelOverlay.classList.add('closing');
@@ -7247,6 +7404,7 @@ const MINI_CHAT_PAD = 3;
   let startupZoomStartTime = performance.now();
 
   function playStartupIntro() {
+    playSfx('startup');
     // startup-snap kills the transition for this one frame so the
     // blurred/dark/scaled state applies INSTANTLY, not eased into over
     // body's own permanent 380ms transition.
@@ -7525,6 +7683,7 @@ const MINI_CHAT_PAD = 3;
     item.addEventListener('click', () => {
       const target = item.dataset.target;
       closeWheel();
+      if (target !== 'overlay') playSfx('panelOpen');
       if (target === 'overlay') {
         // Same node both ways - in the overlay it is the way back out,
         // which matters because the tiny corner X is easy to miss.
@@ -7600,6 +7759,7 @@ const MINI_CHAT_PAD = 3;
       // rather than needing a separate mini layout - see the uiScale
       // floor in positionWheel().
       if (isClick && !wheelOpen) {
+        playSfx('coreOpen');
         playLensFocus(openWheel);
       }
       return true;
@@ -8639,6 +8799,24 @@ const MINI_CHAT_PAD = 3;
   });
 
   const sfxToggle = document.getElementById('sfx-toggle');
+  const uiSfxToggle = document.getElementById('ui-sfx-toggle');
+  const uiSfxVolume = document.getElementById('ui-sfx-volume');
+  if (uiSfxToggle) {
+    uiSfxToggle.addEventListener('change', () => {
+      sfxEnabled = uiSfxToggle.checked;
+      // Turning them off mid-reply has to silence the loop too, not just
+      // stop the next one from starting.
+      if (!sfxEnabled) setSfxThinking(false);
+      else if (aiThinking) setSfxThinking(true);
+    });
+  }
+  if (uiSfxVolume) {
+    uiSfxVolume.addEventListener('input', () => {
+      sfxVolume = Math.max(0, Math.min(1, (parseFloat(uiSfxVolume.value) || 0) / 100));
+      const bed = sfxPool['thinking'];
+      if (bed && !bed.paused) { try { bed.volume = sfxVolume; } catch (err) { } }
+    });
+  }
 
   // ---------- Caption text: on/off + opacity (settings panel) ----------
   let captionEnabled = true;

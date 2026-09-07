@@ -1482,6 +1482,14 @@ async def run_server(engine, voice) -> None:
                     if role in ("hud", "overlay"):
                         voice_clients[websocket] = (role, sink)
                         _claim_voice_route(websocket, sink)
+                elif msg_type == "sfx_ready":
+                    got = int(data.get("loaded") or 0)
+                    tot = int(data.get("total") or 0)
+                    if got == tot:
+                        log.info("Interface sounds ready (%d/%d)", got, tot)
+                    else:
+                        log.error("Only %d of %d interface sounds loaded - "
+                                  "the rest are silent", got, tot)
                 elif msg_type == "page_error":
                     # An exception inside the page. Invisible until now:
                     # the window just sat there wrong while this side

@@ -34,6 +34,10 @@ datas = [
     # Three.js, vendored rather than fetched from a CDN - without it
     # the packaged app renders nothing on a machine with no internet.
     ('vendor', 'vendor'),
+    # Interface sounds. Loaded by relative path from the page, so they
+    # have to sit next to hud_prototype.html exactly as they do in the
+    # repo - see SFX_FILES.
+    ('assets', 'assets'),
 ]
 
 # Fail the BUILD, loudly, if any voice asset the app actually references
@@ -88,6 +92,26 @@ def _verify_voice_assets():
 
 
 _verify_voice_assets()
+
+
+def _verify_sfx_assets():
+    """Every clip hud_prototype.html names must exist, or the UI ships mute.
+
+    Same reasoning as the voice assets above: nothing fails at runtime, the
+    sound simply never plays, and that is not something a build should be
+    able to do quietly.
+    """
+    import re
+    with open("hud_prototype.html", encoding="utf-8") as _f:
+        _names = re.findall(r"'(assets/sfx/[^']+)'", _f.read())
+    _missing = [n for n in sorted(set(_names)) if not os.path.exists(n)]
+    if _missing:
+        raise SystemExit("[spec] interface sounds missing: "
+                         + ", ".join(_missing))
+    print("[spec] %d interface sound(s) will be bundled" % len(set(_names)))
+
+
+_verify_sfx_assets()
 
 # f5_tts ships non-Python files it loads by path (vocab, model configs);
 # without these the engine imports fine and then fails at first synthesis.

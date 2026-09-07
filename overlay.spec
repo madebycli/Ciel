@@ -57,6 +57,9 @@ if not _qt_ver.startswith("6.4"):
 datas = [
     ('hud_prototype.html', '.'),
     ('vendor', 'vendor'),
+    # The overlay plays the appear sound as its own visuals come up, and
+    # its core menu makes the same sounds the main HUD does.
+    ('assets', 'assets'),
 ]
 
 # Qt WebEngine's helper process, Chromium resources and locale data are
