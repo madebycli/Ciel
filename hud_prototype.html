@@ -7990,15 +7990,34 @@ const MINI_CHAT_PAD = 3;
     }
   });
 
-  // F1 hides/shows every HUD overlay - chat bar, test-controls panel,
-  // amplitude meter - Minecraft-style, leaving just the raw visual
-  // (canvas + core-pole, which is part of the effect itself, not chrome).
-  const hudOverlayEls = ['chat-bar', 'controls', 'meter'].map(id => document.getElementById(id));
+  // F1 shows and hides the developer chrome - the test-controls panel and
+  // the amplitude readout - Minecraft-style, leaving just the visual.
+  //
+  // HIDDEN TO BEGIN WITH. They are debugging aids sitting on top of the
+  // thing Krazaa actually built; the scene should be what greets him, and
+  // F1 brings them back when he wants them.
+  //
+  // NOT the chat bar any more. It used to be in this list, from when it
+  // lived on the home screen - the Chat Mode restructure moved it inside
+  // the chat panel, so F1 was quietly hiding the chat INPUT along with
+  // the debug chrome. It is part of a view now, not overlay furniture.
+  const hudOverlayEls = ['controls', 'meter']
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+  // Tracked here rather than read back off the first element, so the two
+  // cannot drift apart and leave F1 toggling them out of step.
+  let hudChromeShown = false;
+  function setHudChrome(shown) {
+    hudChromeShown = shown;
+    hudOverlayEls.forEach(el => { el.hidden = !shown; });
+  }
+  // The standalone overlay and the panel windows hide these in CSS
+  // anyway; doing it here as well is harmless and keeps one rule.
+  setHudChrome(false);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'F1') return;
     e.preventDefault();
-    const hidden = hudOverlayEls[0].hidden;
-    hudOverlayEls.forEach(el => { el.hidden = !hidden; });
+    setHudChrome(!hudChromeShown);
   });
 
   function onCorePointer(event, isClick) {
