@@ -36,44 +36,44 @@ MUST = [
     ("search online for a good ramen place", "web_search", "ramen"),
 
     # --- YouTube: the one that was refused outright ---
-    ("search on youtube for lofi beats", "open_url", "lofi"),
-    ("search youtube for rimuru fight scenes", "open_url", "rimuru"),
-    ("play bohemian rhapsody on youtube", "open_url", "bohemian"),
-    ("youtube search for cat videos", "open_url", "cat"),
-    ("find gundam openings on youtube", "open_url", "gundam"),
+    ("search on youtube for lofi beats", "open_youtube", "lofi"),
+    ("search youtube for rimuru fight scenes", "open_youtube", "rimuru"),
+    ("play bohemian rhapsody on youtube", "open_youtube", "bohemian"),
+    ("youtube search for cat videos", "open_youtube", "cat"),
+    ("find gundam openings on youtube", "open_youtube", "gundam"),
     # Verbatim, and the one that broke it: "opening" contains "open", and
     # matching verbs as substrings searched for "ing by tactic and click on
     # the first link or option".
     ("Search on YouTube. That time I got reincarnated as a slime season 4 "
      "opening by tactic and click on the first link or option",
-     "open_url", "that+time+i+got"),
+     "open_youtube", "that time i got"),
     ("Search on YouTube. That time I got reincarnated as a slime season 4 "
      "opening by tactic and click on the first link or option",
-     "open_url", "season+4+opening+by+tactic"),
+     "open_youtube", "season 4 opening by tactic"),
     # The trailing instruction must be dropped...
     ("search youtube for rimuru fight scenes and play the first one",
-     "open_url", "=https://www.youtube.com/results?search_query=rimuru+fight+scenes"),
+     "open_youtube", "rimuru fight scenes"),
     # ...but NOT when the same-looking clause is what introduces the query.
     ("I say like could you like search on YouTube for me and open up that "
      "time I got reincarnated as a slime season for opening tactic video",
-     "open_url", "reincarnated"),
-    ("search on youtube for lofi beats", "open_url", "youtube.com"),
+     "open_youtube", "reincarnated"),
+    ("search on youtube for lofi beats", "open_youtube", "lofi beats"),
 
     # VERBATIM from great_sage.log - what Krazaa actually said out loud,
     # transcribed correctly, and refused. The word order is not the tidy
     # one; that is the point of keeping them.
     ("Could you open up YouTube and search up that time I got "
      "reincarnated as a slime season for opening and play the video",
-     "open_url", "reincarnated"),
+     "open_youtube", "reincarnated"),
     ("I say like could you like search on YouTube for me and open up "
      "that time I got reincarnated as a slime season for opening tactic "
-     "video", "open_url", "reincarnated"),
+     "video", "open_youtube", "reincarnated"),
     ("Could you open YouTube and search up that time I got reincarnated "
-     "as a slime season 4 opening", "open_url", "reincarnated"),
+     "as a slime season 4 opening", "open_youtube", "reincarnated"),
     # The title starts with "That" - stripping it as filler once turned
     # the search into "time I got reincarnated...".
     ("Could you open YouTube and search up that time I got reincarnated "
-     "as a slime season 4 opening", "open_url", "that+time"),
+     "as a slime season 4 opening", "open_youtube", "that time"),
 
     # --- opening things ---
     ("open spotify", "open_application", "spotify"),
@@ -97,6 +97,22 @@ MUST = [
     ("what do you see", "look_at_screen", ""),
     ("what reminders do i have", "list_tasks", ""),
 ]
+
+# Asking for the top result must set first=True; a plain search must not.
+# "and click on the first video" was being stripped as noise and then
+# ignored, so it opened the results page and left Krazaa to click.
+FIRST_TRUE = [
+    "Search on YouTube that time I got reincarnated as a slime season 4 "
+    "opening and click on the first video",
+    "search youtube for rimuru fight scenes and play the first one",
+    "search on youtube for lofi beats and open the first result",
+]
+FIRST_FALSE = [
+    "search on youtube for lofi beats",
+    "play bohemian rhapsody on youtube",
+    "search youtube for gundam openings",
+]
+
 
 # Phrases that must be left entirely to the model.
 MUST_NOT = [
@@ -136,13 +152,22 @@ def run():
                                 "(wanted %r, got %s)"
                                 % (phrase[:46], want_tool, probe, args))
 
+    for phrase, want in [(p, True) for p in FIRST_TRUE] +                         [(p, False) for p in FIRST_FALSE]:
+        routed = tools.preroute(phrase)
+        args = next((a for n, a in routed if n == "open_youtube"), None)
+        if args is None:
+            failures.append("%-46s did not route to open_youtube" % phrase[:46])
+        elif bool(args.get("first")) != want:
+            failures.append("%-46s first=%s, wanted %s"
+                            % (phrase[:46], args.get("first"), want))
+
     for phrase in MUST_NOT:
         routed = tools.preroute(phrase)
         if routed:
             failures.append("%-46s should NOT route, but ran %s"
                             % (phrase[:46], [n for n, _ in routed]))
 
-    total = len(MUST) + len(MUST_NOT)
+    total = len(MUST) + len(MUST_NOT) + len(FIRST_TRUE) + len(FIRST_FALSE)
     if failures:
         print("FAILED - %d of %d" % (len(failures), total))
         for f in failures:

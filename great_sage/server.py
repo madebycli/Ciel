@@ -183,7 +183,8 @@ log = logging.getLogger(__name__)
 # Pre-routed tools that DO something rather than report something. When one
 # of these runs, the request has been carried out and the turn is finished
 # - see the silent-action branch in the chat thread below.
-ACTION_TOOLS = frozenset({"open_url", "open_application", "open_folder"})
+ACTION_TOOLS = frozenset({"open_url", "open_application", "open_folder",
+                         "open_youtube"})
 
 
 _GUARD_PROTECTED = None

@@ -185,6 +185,49 @@ def _open_url(url: str) -> str:
     return "Opened %s." % u
 
 
+def _youtube_first_video(query):
+    """The watch URL of the top result, or None.
+
+    The results page is server-rendered enough for this: the ids are in
+    the JSON blob the page ships with, and the first one is the first
+    result. No API key, no scraping library, no browser.
+    """
+    import re as _r
+    import urllib.parse as _up
+    import requests
+    url = _YOUTUBE_SEARCH + _up.quote_plus(query)
+    try:
+        r = requests.get(url, timeout=20,
+                         headers={"User-Agent": "Mozilla/5.0 GreatSage"})
+        r.raise_for_status()
+    except Exception:
+        return None
+    ids = _r.findall(r'"videoId":"([A-Za-z0-9_-]{11})"', r.text)
+    return ("https://www.youtube.com/watch?v=" + ids[0]) if ids else None
+
+
+def _open_youtube(query: str, first: bool = False) -> str:
+    """Search YouTube, and open the top result if that is what was asked.
+
+    Krazaa asks for "...and click on the first video" and means it. Opening
+    the results page and leaving him to click is the same as not doing it.
+    """
+    import urllib.parse as _up
+    q = (query or "").strip()
+    if not q:
+        raise ToolError("Nothing to search YouTube for.")
+    if first:
+        watch = _youtube_first_video(q)
+        if watch:
+            return _open_url(watch)
+        # The page shape changed, or the network refused. Falling back to
+        # the search results is worse than asked for but far better than
+        # an error - he can still see what he wanted.
+        log.warning("Could not resolve the first YouTube result for %r; "
+                    "opening the search instead", q)
+    return _open_url(_YOUTUBE_SEARCH + _up.quote_plus(q))
+
+
 def _open_folder(path: str) -> str:
     p = os.path.expandvars(os.path.expanduser((path or "").strip()))
     if not p:
@@ -270,6 +313,17 @@ REGISTRY: List[Tool] = [
                                   "description": "Application name"}},
           "required": ["name"]},
          _open_application, SAFE),
+    Tool("open_youtube",
+         "Search YouTube and open the results, or open the top result "
+         "directly when the user asks for the first one.",
+         {"type": "object",
+          "properties": {"query": {"type": "string"},
+                         "first": {"type": "boolean",
+                                   "description": "Open the top result "
+                                                  "instead of the results "
+                                                  "page"}},
+          "required": ["query"]},
+         _open_youtube, SAFE),
     Tool("open_folder",
          "Open a folder, or a file's location, in File Explorer.",
          {"type": "object",
@@ -693,7 +747,7 @@ _PREROUTE = (
     # The PATTERN only has to notice that this is about YouTube. Pulling
     # the actual query out of a spoken sentence is not something a regex
     # should be doing - see _youtube_query.
-    (_re.compile(r"\byoutube\b", _re.I), "open_url", lambda m: _youtube_args(m)),
+    (_re.compile(r"\byoutube\b", _re.I), "open_youtube", lambda m: _youtube_args(m)),
 
     # Bare "open <something>". A name that looks like a domain goes to the
     # browser; anything else is treated as an installed application, which
@@ -840,13 +894,28 @@ def _youtube_query(text):
     return q.strip().strip("?.!,")
 
 
+# "and click on the FIRST video" - an instruction about which result
+# to take. It is stripped out of the query by _after_verb and acted on
+# here instead. Either the verb comes just before it or the noun just
+# after; both forms turn up in speech.
+_YT_FIRST = _re.compile(
+    r"\b(?:click|play|open|pick|choose|select|hit|tap)\b[^.]{0,24}\bfirst\b|"
+    r"\bfirst\b\s+(?:video|link|result|one|option|hit)\b",
+    _re.I)
+
+
 def _youtube_args(m):
-    """A YouTube search page for whatever was actually asked for."""
-    import urllib.parse as _up
+    """What to search YouTube for, and whether to open the top result.
+
+    Deliberately does NO network here. Pre-routing runs for every turn
+    that mentions YouTube, and the fetch belongs in the tool, where it
+    happens only if the tool actually runs - which also keeps the
+    routing tests offline and instant.
+    """
     q = _youtube_query(m.string)
     if len(q) < 2:
         return None
-    return {"url": _YOUTUBE_SEARCH + _up.quote_plus(q)}
+    return {"query": q, "first": bool(_YT_FIRST.search(m.string or ""))}
 
 
 # Words that mean a place on this machine rather than an app or a site.
