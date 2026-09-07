@@ -5461,9 +5461,16 @@ const MINI_CHAT_PAD = 3;
       // showCaption cleared the bar and retyped the whole thing just as
       // the audio finished.
       if (captionFollowsSpeech && replyBuffer && !spokenSoFar) {
-        aiThinking = false;
         showCaption(replyBuffer);
       }
+      // UNCONDITIONAL. Speaking being finished means the turn is over,
+      // whatever was or was not said - and a turn can now legitimately
+      // produce no reply at all: a pre-routed action opens the page and
+      // says nothing. This used to be inside the branch above, which
+      // needed reply text to run, so a silent turn left the scene
+      // thinking for ever - stuck at the low frame cap with the bed
+      // looping under it.
+      aiThinking = false;
       spokenSoFar = '';
       // The whole reply has finished speaking - only now may the caption
       // start its countdown.

@@ -180,6 +180,11 @@ PORT = 8765
 
 log = logging.getLogger(__name__)
 
+# Pre-routed tools that DO something rather than report something. When one
+# of these runs, the request has been carried out and the turn is finished
+# - see the silent-action branch in the chat thread below.
+ACTION_TOOLS = frozenset({"open_url", "open_application", "open_folder"})
+
 
 _GUARD_PROTECTED = None
 
@@ -682,6 +687,46 @@ def _handle_chat(text, engine, voice, sink, websocket, loop,
                 send({"type": "tool_used", "name": _name,
                       "result": str(_res)[:400]})
             pre_images = tool_layer.take_pending_images() if pre_results else []
+
+            # AN ACTION THAT WORKED NEEDS NO COMMENTARY, AND NO SECOND
+            # OPINION.
+            #
+            # Asked to search YouTube for "that time I got reincarnated as
+            # a slime season 4 opening called tactic", the model searched
+            # for "Reincarnated as a Slime Season 1 Episode 4 Tactic Play"
+            # - a season and an episode Master never said - and then opened
+            # Crunchyroll off its own bat. Handing it the turn after the
+            # pre-route has already done the thing invites exactly that:
+            # it re-reads the request, decides what was really meant, and
+            # acts again.
+            #
+            # So when the pre-route ran ACTIONS and they all worked, the
+            # turn is over. The page opened, the app launched; there is
+            # nothing to add, and Krazaa asked not to be told about it.
+            #
+            # Only for actions. A question that was pre-routed - the time,
+            # free space, a web search - still needs the model to answer
+            # it, because the answer IS the reply.
+            if (pre_results
+                    and all(n in ACTION_TOOLS for n, _ in pre_results)
+                    and not any(str(r).startswith("FAILED")
+                                for _, r in pre_results)):
+                log.info("Pre-routed action(s) done (%s) - no reply needed",
+                         ", ".join(n for n, _ in pre_results))
+                timer.first_token()
+                timer.text_done()
+                timer.finish()
+                send({"type": "reply_done", "text": ""})
+                # speaking_done EXPLICITLY. The one at the end of this
+                # function is in a finally that belongs to the SPEAKING
+                # try, further down - returning from here never reaches
+                # it, and the page waits on that message to leave the
+                # thinking state. Without this the scene sat at the low
+                # frame cap with the bed looping, having done the thing
+                # perfectly.
+                send({"type": "speaking_done"})
+                return
+
             reply, used_tools = engine.send_with_tools(
                 text, tool_layer.ollama_schema(), tool_layer.execute,
                 collect_images=tool_layer.take_pending_images,

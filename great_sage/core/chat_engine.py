@@ -194,8 +194,31 @@ class ChatEngine:
         # something this time.
         for name, result in (preroute_results or []):
             used.append((name, result))
+            # A tool result with NO assistant turn asking for it is an
+            # orphan in the transcript - the model never requested it, and
+            # measurably does not attend to it. Handed the correct
+            # "Monday 07 September 2026, 00:38" this way, it answered
+            # "seven o'clock on the morning of Monday, September 21st,
+            # 2025": right answer in context, ignored completely.
+            #
+            # So the call it would have made is written in front of the
+            # result, giving the shape the model was trained on: assistant
+            # asks, tool answers.
+            outgoing.append({"role": "assistant", "content": "",
+                             "tool_calls": [{"type": "function",
+                                             "function": {"name": name,
+                                                          "arguments": {}}}]})
             outgoing.append({"role": "tool", "content": str(result),
                              "tool_name": name})
+        if preroute_results:
+            # And said plainly as well. The pair above is the correct
+            # format; this is the belt to its braces, because a wrong
+            # answer here is a confidently wrong one.
+            outgoing.append({"role": "system", "content":
+                             "The tool results above were just run and are "
+                             "current. Use their values exactly as given. "
+                             "Do not adjust, reinterpret or replace them "
+                             "with anything you remember."})
         if preroute_images:
             outgoing.append({"role": "user", "content": "(the screen)",
                              "images": list(preroute_images)})

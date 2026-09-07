@@ -829,7 +829,16 @@ def _open_something_args(m):
     if low.startswith("a ") or low.startswith("an ") or low.startswith("some "):
         return None
     if any(w in low for w in _FOLDERISH):
-        return {"__tool": "open_folder", "path": t}
+        # "open my downloads folder" leaves "downloads folder", and the
+        # folder tool resolves a NAME against the home directory - so the
+        # trailing noun has to come off or it looks for a directory
+        # literally called "downloads folder" and fails.
+        name = t
+        for tail in ("folder", "directory", "dir"):
+            if name.lower().endswith(" " + tail):
+                name = name[: -(len(tail) + 1)].strip()
+                break
+        return {"__tool": "open_folder", "path": name or t}
     if "." in low and " " not in low:          # looks like a domain
         return {"__tool": "open_url", "url": t}
     if low in _KNOWN_SITES:

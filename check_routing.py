@@ -66,8 +66,11 @@ MUST = [
     ("open reaper", "open_application", "reaper"),
     ("open youtube", "open_url", "youtube.com"),
     ("open github", "open_url", "github.com"),
-    ("open my downloads folder", "open_folder", "downloads"),
-    ("open the documents folder", "open_folder", "documents"),
+    # EXACT, not "contains". "downloads folder" contains "downloads" and
+    # still failed - open_folder resolves a NAME against the home
+    # directory, so the trailing noun must already be gone.
+    ("open my downloads folder", "open_folder", "=downloads"),
+    ("open the documents folder", "open_folder", "=documents"),
 
     # --- this machine, this moment ---
     ("what time is it", "get_time", ""),
@@ -109,9 +112,14 @@ def run():
             continue
         if want_arg:
             args = next(a for n, a in routed if n == want_tool)
-            if want_arg.lower() not in _args_text(args):
-                failures.append("%-46s %s ran without %r (args: %s)"
-                                % (phrase[:46], want_tool, want_arg, args))
+            exact = want_arg.startswith("=")
+            probe = want_arg[1:] if exact else want_arg
+            hit = (_args_text(args) == probe.lower() if exact
+                   else probe.lower() in _args_text(args))
+            if not hit:
+                failures.append("%-46s %s ran with the wrong argument "
+                                "(wanted %r, got %s)"
+                                % (phrase[:46], want_tool, probe, args))
 
     for phrase in MUST_NOT:
         routed = tools.preroute(phrase)
