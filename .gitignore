@@ -64,9 +64,16 @@ great_sage_hud.log
 .build311/
 
 # Per-machine runtime state, not source (spec S0: keep user data separate).
-hud_settings.json
-voice_line_prefs.json
-chats.json
+#
+# Anchored with a leading slash - these are the RUNTIME files at the repo
+# root. Without it the pattern matches at any depth and also swallowed
+# defaults/hud_settings.json, which is the opposite: the tuned settings a
+# fresh install starts from, and the whole reason a download looks like
+# the thing that was built.
+/hud_settings.json
+/voice_line_prefs.json
+/chats.json
+/chats.json.bak
 
 # API keys - never commit these.
 ai_settings.json

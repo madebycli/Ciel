@@ -38,6 +38,10 @@ datas = [
     # have to sit next to hud_prototype.html exactly as they do in the
     # repo - see SFX_FILES.
     ('assets', 'assets'),
+    # The tuned settings a fresh install starts from, so a download looks
+    # and sounds like the thing that was built rather than like raw code
+    # defaults - see hud_settings._shipped_defaults.
+    ('defaults', 'defaults'),
 ]
 
 # Fail the BUILD, loudly, if any voice asset the app actually references
