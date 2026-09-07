@@ -21,6 +21,7 @@ module exists to prevent.
 import json
 import logging
 import os
+import shutil as _shutil
 import tempfile
 from typing import Any, Dict, List
 
@@ -143,6 +144,21 @@ def save(path: str, chats: Any) -> int:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=1)
+        # Keep the previous file before replacing it.
+        #
+        # Every save is a WHOLE-LIST replace - one bad list, from any
+        # window, and every conversation is gone with nothing to go back
+        # to. That is not hypothetical: a single-item list written by a
+        # test wiped the lot, and atomic-and-unrecoverable is exactly as
+        # lost as non-atomic would have been.
+        #
+        # One generation, best effort. A backup that fails must never stop
+        # the save it was protecting.
+        if os.path.exists(path):
+            try:
+                _shutil.copy2(path, path + ".bak")
+            except Exception:
+                pass
         os.replace(tmp, path)       # atomic on Windows and POSIX alike
     except Exception:
         try:

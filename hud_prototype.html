@@ -4939,6 +4939,15 @@ const MINI_CHAT_PAD = 3;
     panelClose:    'assets/sfx/Main_UI_Close.wav',
     overlayAppear: 'assets/sfx/Overlay_apear.wav',
     thinking:      'assets/sfx/AI_Thinking_idle.wav',
+    uiClick:       'assets/sfx/UI Click.wav',
+    uiClick2:      'assets/sfx/UI Click 2.wav',
+    uiHover:       'assets/sfx/UI Hover.wav',
+  };
+  // Per-clip trim, on top of the volume slider. Mixing is done in the
+  // clips themselves; this is only for the ones that still sit wrong
+  // against the rest once they are in place.
+  const SFX_GAIN = {
+    overlayAppear: 1.2,      // Krazaa: 20% up, it was too quiet
   };
   let sfxEnabled = true;
   let sfxVolume = 0.7;
@@ -5026,9 +5035,11 @@ const MINI_CHAT_PAD = 3;
     try { return !document.hidden; } catch (err) { return true; }
   }
 
-  function sfxStart(el) {
+  function sfxStart(el, name) {
     try {
-      el.volume = sfxVolume;
+      // Clamped: volume is 0..1 and a gain above 1 on an already loud
+      // slider setting would throw rather than simply being loud.
+      el.volume = Math.max(0, Math.min(1, sfxVolume * (SFX_GAIN[name] || 1)));
       el.currentTime = 0;
       const p = el.play();
       if (p && p.catch) p.catch(() => {});
@@ -5089,7 +5100,7 @@ const MINI_CHAT_PAD = 3;
         el._sfxWaiting = false;
         el.removeEventListener('canplay', onReady);
         if (timer) clearTimeout(timer);
-        if (play) sfxStart(el);
+        if (play) sfxStart(el, name);
       };
       const onReady = () => done(true);
       el.addEventListener('canplay', onReady);
@@ -5097,7 +5108,7 @@ const MINI_CHAT_PAD = 3;
       try { el.load(); } catch (err) { }
       return;
     }
-    sfxStart(el);
+    sfxStart(el, name);
   }
 
   // The thinking bed loops under the outer ring while Great Sage works.
@@ -5117,7 +5128,7 @@ const MINI_CHAT_PAD = 3;
       // working, which is exactly when the overlay should feel alive.
       if (!sfxEnabled || !sfxAudible()) return;
       try {
-        el.volume = sfxVolume;
+        el.volume = Math.max(0, Math.min(1, sfxVolume * (SFX_GAIN.thinking || 1)));
         if (el.paused) { el.currentTime = 0; const p = el.play(); if (p && p.catch) p.catch(() => {}); }
       } catch (err) { }
       return;
@@ -5517,7 +5528,14 @@ const MINI_CHAT_PAD = 3;
         // the same as resuming a conversation - the model's context
         // starts empty, so marking an old chat active would show a
         // transcript the AI cannot actually remember.
-        activeTopicId = null;
+        //
+        // A SYNC is different: it means another window saved, and this one
+        // is only catching up. Clearing the selection there would drop
+        // whatever conversation is open in front of the user the moment
+        // the overlay or a panel wrote anything.
+        if (!msg.sync || !chatTopics.some((t) => t.id === activeTopicId)) {
+          activeTopicId = null;
+        }
         renderTopicList();
         renderHistory();
       }
@@ -7857,6 +7875,22 @@ const MINI_CHAT_PAD = 3;
   window.addEventListener('pointerup', endMiniDrag);
   window.addEventListener('pointercancel', endMiniDrag);
   window.addEventListener('blur', endMiniDrag);   // the OS drag steals focus
+
+  // Click and hover on the core menu's own buttons. Two click clips, used
+  // alternately: the same sample on every press in a row reads as a
+  // repeat, and swapping between them makes the menu feel like hardware.
+  // Hover fires on mouseenter, so it sounds once per arrival rather than
+  // continuously while the pointer sits there.
+  let uiClickAlt = false;
+  function playUiClick() {
+    uiClickAlt = !uiClickAlt;
+    playSfx(uiClickAlt ? 'uiClick' : 'uiClick2');
+  }
+  [...wheelItems, wheelCloseBtn].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('mouseenter', () => playSfx('uiHover'));
+    el.addEventListener('click', playUiClick);
+  });
 
   wheelItems.forEach((item) => {
     item.addEventListener('click', () => {

@@ -870,6 +870,13 @@ async def run_server(engine, voice) -> None:
     # an overlay while the HUD is still open used to leave nowhere to
     # deliver to until the user typed something.
     voice_clients = {}          # websocket -> (role, sink)
+    # EVERY connected page, for keeping the saved conversations in step.
+    # The HUD, the overlay and each history panel all hold their own copy
+    # of the whole chat list and each saves the whole thing - so without
+    # this, a conversation started in one window is invisible in the
+    # others, and the next save from a window that never saw it wipes it.
+    # That is why a chat could not be found afterwards.
+    all_clients = set()
 
     def _claim_voice_route(websocket, sink):
         active_connection["websocket"] = websocket
@@ -1141,6 +1148,7 @@ async def run_server(engine, voice) -> None:
     async def handler(websocket):
         sink = BrowserAudioSink(websocket, loop)
         is_log_subscriber = False
+        all_clients.add(websocket)
         # Which window, at the socket level. Several connect to this same
         # server and they are otherwise indistinguishable in the log, so a
         # connection that misbehaves cannot be told from one that does not.
@@ -1464,6 +1472,21 @@ async def run_server(engine, voice) -> None:
                         n = chat_store.save(settings.CHAT_STORE_PATH,
                                             data.get("chats"))
                         log.debug("Saved %d chat(s)", n)
+                        # Tell every OTHER window, so all of them hold the
+                        # same list. Marked as a sync so they update the
+                        # sidebar without dropping whichever conversation
+                        # is open in front of the user.
+                        payload = json.dumps({
+                            "type": "chats",
+                            "chats": chat_store.load(settings.CHAT_STORE_PATH),
+                            "sync": True})
+                        for other in list(all_clients):
+                            if other is websocket:
+                                continue
+                            try:
+                                await other.send(payload)
+                            except Exception:
+                                pass
                     except Exception:
                         log.exception("Could not save chats")
                 elif msg_type == "save_settings":
@@ -1618,6 +1641,7 @@ async def run_server(engine, voice) -> None:
             # Holding a dead socket here would send every later voice
             # message into a closed connection instead of to whichever
             # window is still open.
+            all_clients.discard(websocket)
             _release_voice_route(websocket)
             # Unblock anything still waiting on an ack from this connection
             # rather than leaving a background thread hung forever.

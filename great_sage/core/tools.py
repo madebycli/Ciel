@@ -680,7 +680,174 @@ _PREROUTE = (
                  r"look\s+up|google|web\s?search)\s+(?P<q>.{2,200})",
                  _re.I),
      "web_search", lambda m: _search_args(m)),
+
+    # WATCHING SOMETHING IS NOT A CONVERSATION EITHER.
+    #
+    # Krazaa, out loud: "Could you open up YouTube and search up that time
+    # I got reincarnated as a slime season 4 opening and play the video".
+    # Transcribed perfectly, tools attached, and the model answered that it
+    # could not do that and he should go and click it himself. Twenty
+    # minutes later the identical request worked. A coin flip, and the
+    # losing side tells him to do it by hand.
+    #
+    # The PATTERN only has to notice that this is about YouTube. Pulling
+    # the actual query out of a spoken sentence is not something a regex
+    # should be doing - see _youtube_query.
+    (_re.compile(r"\byoutube\b", _re.I), "open_url", lambda m: _youtube_args(m)),
+
+    # Bare "open <something>". A name that looks like a domain goes to the
+    # browser; anything else is treated as an installed application, which
+    # is what open_application is for and what it reports cleanly when the
+    # name matches nothing.
+    (_re.compile(r"\b(?:open|launch|start)\s+(?:up\s+)?(?:my |the )?"
+                 r"(?P<t>[A-Za-z0-9 ._-]{2,60})$", _re.I),
+     "__open_something", lambda m: _open_something_args(m)),
 )
+
+
+_YOUTUBE_SEARCH = "https://www.youtube.com/results?search_query="
+
+
+# Verbs that introduce what is being looked for. Longest first, so
+# "search up" is not read as "search" with a stray "up" left behind.
+_YT_VERBS = ("search up for", "search up", "search for", "search on",
+             "search", "look up", "look for", "pull up", "play", "open up",
+             "open", "find", "put on", "watch")
+
+# Words that are left dangling once the verb is removed.
+# NOT "that": "That Time I Got Reincarnated as a Slime" starts with it,
+# and stripping it turned the search into "time I got reincarnated...".
+_YT_LEAD = ("for me", "the video", "a video", "video for", "for", "and",
+            "me", "up", "on", "please", "some")
+# Left dangling on the other side, when the query came BEFORE "youtube".
+_YT_TRAIL = ("on", "in", "at", "from", "for", "and", "the", "a", "up",
+             "please", "video")
+
+# Asking ABOUT YouTube is not asking FOR something on it.
+_YT_NOT_A_REQUEST = ("is youtube down", "what is youtube", "who owns youtube",
+                     "how does youtube")
+
+
+def _youtube_query(text):
+    """The thing to search for, out of a spoken sentence.
+
+    Real examples this has to survive, all from one session:
+
+        "Could you open up YouTube and search up that time I got
+         reincarnated as a slime season 4 opening and play the video"
+        "could you like search on YouTube for me and open up that time I
+         got reincarnated as a slime season 4 opening tactic video"
+        "search youtube for lofi beats"
+
+    The word order is not fixed and neither is the verb, so this takes
+    everything after the first search-ish verb that FOLLOWS "youtube",
+    and if there is none, everything after "youtube" itself. That handles
+    both "youtube ... search up X" and "search youtube for X".
+    """
+    raw = text or ""
+    low = raw.lower()
+    if "youtube" not in low:
+        return ""
+    if any(p in low for p in _YT_NOT_A_REQUEST):
+        return ""
+    i = low.index("youtube") + len("youtube")
+    rest = raw[i:]
+    rlow = rest.lower()
+    best = None
+    for v in _YT_VERBS:
+        j = rlow.find(v)
+        if j >= 0 and (best is None or j < best[0]):
+            best = (j, v)
+    q = rest[best[0] + len(best[1]):] if best else rest
+    q = q.strip().strip("?.!,")
+    if not q:
+        # Nothing after the word - the query came first, as in "play
+        # bohemian rhapsody ON youtube". Take what sits between the verb
+        # and the word itself.
+        head = raw[:low.index("youtube")]
+        hlow = head.lower()
+        hbest = None
+        for v in _YT_VERBS:
+            j = hlow.find(v)
+            if j >= 0 and (hbest is None or j < hbest[0]):
+                hbest = (j, v)
+        q = (head[hbest[0] + len(hbest[1]):] if hbest else head)
+        q = q.strip().strip("?.!,")
+        changed = True
+        while changed and q:
+            changed = False
+            ql = q.lower()
+            for tail in _YT_TRAIL:
+                if ql.endswith(" " + tail):
+                    q = q[: -(len(tail) + 1)].strip()
+                    changed = True
+                    break
+    # Strip whatever connective words the verb left in front.
+    changed = True
+    while changed and q:
+        changed = False
+        ql = q.lower()
+        for lead in _YT_LEAD:
+            if ql.startswith(lead + " "):
+                q = q[len(lead) + 1:].strip()
+                changed = True
+                break
+    return q.strip().strip("?.!,")
+
+
+def _youtube_args(m):
+    """A YouTube search page for whatever was actually asked for."""
+    import urllib.parse as _up
+    q = _youtube_query(m.string)
+    if len(q) < 2:
+        return None
+    return {"url": _YOUTUBE_SEARCH + _up.quote_plus(q)}
+
+
+# Words that mean a place on this machine rather than an app or a site.
+_FOLDERISH = ("folder", "directory", "downloads", "desktop", "documents",
+              "pictures", "videos", "music")
+
+
+# A question ABOUT opening something is not an instruction to open it.
+# "how do i open a pull request" would otherwise launch an application
+# called "a pull request" - which fails, but only after trying.
+_ASKING = ("how ", "why ", "what ", "when ", "where ", "who ", "which ",
+           "do i ", "should i ", "can i ", "could i ", "is there ")
+
+
+def _open_something_args(m):
+    whole = (m.string or "").strip().lower()
+    if any(whole.startswith(w) for w in _ASKING) or " do i " in whole:
+        return None
+    t = (m.group("t") or "").strip().strip("?.!,")
+    if len(t) < 2:
+        return None
+    low = t.lower()
+    # "a pull request", "an issue" - an article means a thing described,
+    # not a thing named.
+    if low.startswith("a ") or low.startswith("an ") or low.startswith("some "):
+        return None
+    if any(w in low for w in _FOLDERISH):
+        return {"__tool": "open_folder", "path": t}
+    if "." in low and " " not in low:          # looks like a domain
+        return {"__tool": "open_url", "url": t}
+    if low in _KNOWN_SITES:
+        return {"__tool": "open_url", "url": _KNOWN_SITES[low]}
+    return {"__tool": "open_application", "name": t}
+
+
+# Names people say meaning "the website", not "an installed program".
+_KNOWN_SITES = {
+    "youtube": "https://www.youtube.com",
+    "google": "https://www.google.com",
+    "gmail": "https://mail.google.com",
+    "github": "https://github.com",
+    "reddit": "https://www.reddit.com",
+    "twitch": "https://www.twitch.tv",
+    "netflix": "https://www.netflix.com",
+    "chatgpt": "https://chatgpt.com",
+}
 
 
 # Things that are a SEARCH of this machine, not of the web. "find my
@@ -716,6 +883,11 @@ def preroute(text: str):
         built = args(m) if callable(args) else dict(args)
         if built is None:
             continue
+        # One pattern, several possible tools: "open X" is a folder, a
+        # site or an application depending on what X looks like, and
+        # deciding that needs the match, not another three regexes.
+        if "__tool" in built:
+            name = built.pop("__tool")
         out.append((name, built))
     return out
 

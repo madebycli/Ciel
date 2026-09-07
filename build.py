@@ -91,7 +91,11 @@ def build_app():
     # black, never connects, and sits on "connecting..." - with a
     # perfectly healthy Python log, because the failure is in the page.
     # That shipped once. It is checked BEFORE the build now.
-    for _script in ("check_js.py", "check_shaders.py"):
+    # check_routing.py is here for the same reason as the other two:
+    # a routing regression is silent. Nothing errors, the model just
+    # answers "I cannot do that" and Master is told to click it
+    # himself.
+    for _script in ("check_js.py", "check_shaders.py", "check_routing.py"):
         if subprocess.run([sys.executable, _script], cwd=HERE).returncode:
             raise SystemExit(
                 chr(10) + _script + " failed - refusing to build a bundle "
