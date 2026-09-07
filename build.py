@@ -220,6 +220,14 @@ def verify():
     if bad:
         raise SystemExit(f"\n{bad} check(s) FAILED - do not ship this build.")
     print("\n    Build is complete and self-consistent.")
+    # Point the Desktop shortcut at the exe that was just built, so it
+    # can never be left aiming at a stale one. Best effort - a missing
+    # shortcut is an inconvenience, not a failed build.
+    try:
+        import make_shortcut
+        make_shortcut.make(quiet=True)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
