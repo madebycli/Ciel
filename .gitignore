@@ -13,11 +13,19 @@ ENV/
 .env
 *.env.local
 
-# Personal voice recording used for cloning - sensitive, and specific to
-# whoever set this up locally. Track the folder (see .gitkeep), not the
-# audio itself.
+# Voice samples, split by what they are FOR.
+#
+# candidates/ IS shipped: those are the voices Great Sage actually speaks
+# with, and the settings panel picks between them. Without them a fresh
+# clone has no reference audio and no voice at all, which is most of the
+# point of the project.
+#
+# my_voice*.* is NOT: raw personal recordings of whoever set this up,
+# kept local.
 voice_samples/*
 !voice_samples/.gitkeep
+!voice_samples/candidates/
+!voice_samples/candidates/**
 
 # Model weights / checkpoints, in case any ever end up in-repo instead of
 # in the global TTS/torch cache.
