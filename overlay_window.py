@@ -244,6 +244,13 @@ def _spawn_panel(section: str):
         print(f"[overlay] could not open panel {section}: {exc}", flush=True)
 
 
+# The page draws its own title bar (#panel-window-chrome) because the
+# window is frameless. That bar is 46px tall, and its minimise/close
+# buttons sit at the right - pressing those must not also start a drag.
+PANEL_BAR_H = 46
+PANEL_BUTTONS_W = 96
+
+
 class PanelView(QWebEngineView):
     """A settings/history window: opaque, frameless, its own chrome."""
 
@@ -252,6 +259,49 @@ class PanelView(QWebEngineView):
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.resize(*PANEL_SIZE)
         self.setWindowTitle(f"Great Sage - {section}")
+        self._drag_from = None
+        self._filtered = None
+        # Same reasoning as the overlay: QWebEngineView never receives
+        # mouse events itself - they go to an internal render widget - so
+        # the page's .pywebview-drag-region did nothing here, and there is
+        # no pywebview under Qt to honour it anyway. That is why the title
+        # bar could not be dragged.
+        self.loadFinished.connect(lambda _ok: self._install_mouse_filter())
+
+    def showEvent(self, event):
+        # The render widget may not exist yet when the page finishes
+        # loading, and installing on a proxy that is not there yet is a
+        # silent no-op - which leaves the title bar dead with nothing to
+        # show why. The overlay installs twice for the same reason.
+        super().showEvent(event)
+        self._install_mouse_filter()
+        QTimer.singleShot(0, self._install_mouse_filter)
+
+    def _install_mouse_filter(self):
+        proxy = self.focusProxy()
+        if proxy is not None and proxy is not self._filtered:
+            proxy.installEventFilter(self)
+            self._filtered = proxy
+
+    def _in_bar(self, pos) -> bool:
+        return (pos.y() <= PANEL_BAR_H
+                and pos.x() <= self.width() - PANEL_BUTTONS_W)
+
+    def eventFilter(self, obj, event):
+        et = event.type()
+        if et == QEvent.MouseButtonPress:
+            if (event.button() == Qt.LeftButton
+                    and self._in_bar(event.position())):
+                self._drag_from = (event.globalPosition().toPoint()
+                                   - self.frameGeometry().topLeft())
+                return True      # swallow, or the page reacts to it too
+        elif et == QEvent.MouseMove:
+            if self._drag_from is not None and (event.buttons() & Qt.LeftButton):
+                self.move(event.globalPosition().toPoint() - self._drag_from)
+                return True
+        elif et in (QEvent.MouseButtonRelease, QEvent.Leave):
+            self._drag_from = None
+        return super().eventFilter(obj, event)
 
 
 def _apply_ws_border(win) -> bool:

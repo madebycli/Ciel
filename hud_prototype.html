@@ -1354,8 +1354,33 @@ body.panel-window #center-panel-frame {
   width: 100%; height: 100%;
   clip-path: none !important;
   animation: none !important;
+  /* #center-panel is positioned against this in panel mode. Without an
+     explicit containing block it resolves against the viewport, which
+     happens to look the same until the window is resized. */
+  position: relative;
 }
-body.panel-window #center-panel-warp { display: none !important; }
+/* NOT display:none. #center-panel - and therefore every control in the
+   settings and history sections - is a CHILD of this element, so hiding
+   it hid the entire contents of the panel window. That is what the empty
+   black window was: the panel was there, painted by nothing, with its
+   content display:none along with its wrapper.
+
+   What actually needs to go is this element's ROLE in the main UI - the
+   fisheye clip and the translucent fill that shape the full-screen bar.
+   In a window of its own there is nothing to shape and nothing behind to
+   show through, so it becomes a plain pass-through container. */
+body.panel-window #center-panel-warp {
+  display: block;
+  width: 100%; height: 100%;
+  -webkit-clip-path: none !important;
+  clip-path: none !important;
+  background: none !important;
+}
+/* The curved white "peeling" outline. It is an SVG stroking the same path
+   the clip uses, and it had no panel-window rule at all - which is where
+   the giant curved lines in a small settings window came from. The window
+   has its own square 2px border, drawn on #center-panel below. */
+body.panel-window #center-panel-outline { display: none !important; }
 body.panel-window #center-panel {
   box-sizing: border-box;
   width: auto; height: auto;
@@ -1368,6 +1393,21 @@ body.panel-window #center-panel {
   clip-path: none;
 }
 body.panel-window #center-panel-close { display: none !important; }
+/* The chat layout is built for the full-screen panel: a 208px sidebar
+   beside the transcript, and a column at least 58vh tall so the input bar
+   is pushed to the bottom of a tall panel. In a small window that leaves
+   almost no room for the transcript itself. Compact, not a different
+   layout - it is the same view, which is the point of the overlay. */
+/* height, not just gap. #chat-layout is a flex ROW that was only as tall
+   as its contents, so the transcript could not take up the slack and the
+   input bar sat directly under the header with the bottom half of the
+   window empty - the "large amount of empty space". With a height the
+   column fills the window and #chat-view's flex:1 pushes the input to
+   the bottom, where it is in the full-size panel. */
+body.panel-window #chat-layout { gap: 12px; height: 100%; }
+body.panel-window #chat-sidebar { flex: 0 0 150px; padding-right: 9px; }
+body.panel-window #chat-main { min-height: 0; height: 100%; }
+body.panel-window .panel-section { max-width: none; height: 100%; }
 
 /* Its own title bar - the window is frameless, same as the log console. */
 #panel-window-chrome {
@@ -7542,7 +7582,15 @@ const MINI_CHAT_PAD = 3;
   // it skipped straight past this line and sat at blur(36px)
   // brightness(0.08) forever, which reads exactly as "the overlay
   // visuals are gone".
-  if (IS_STANDALONE_OVERLAY) {
+  // Neither the overlay nor a settings/history panel plays the startup
+  // sequence. It is a 900ms zoom and blur with a spoken greeting, meant
+  // to introduce the full-screen scene once - on a small window that
+  // opens from a menu it reads as a fault, and a panel greeting Master
+  // every time he opens settings is absurd. Both just appear.
+  //
+  // This also covers the startup SOUND and the "Good morning" voice line,
+  // because both live inside playStartupIntro.
+  if (IS_STANDALONE_OVERLAY || PANEL_WINDOW) {
     document.body.classList.remove('startup-snap', 'startup-active',
                                    'startup-intro');
   } else {
