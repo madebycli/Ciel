@@ -2088,6 +2088,13 @@ body.mini:hover #mini-exit { opacity: 1; }
       <label class="slider-label">Interface sound volume</label>
       <input type="range" id="ui-sfx-volume" min="0" max="100" value="70">
 
+      <label class="slider-label">Adjust one sound</label>
+      <select id="sfx-pick"></select>
+      <input type="range" id="sfx-gain" min="0" max="200" value="100">
+      <div class="setting-hint">Sets that one clip's level against the
+        others. It plays as you let go of the slider, so you can hear it.
+        100% is as recorded.</div>
+
       <label>
         <input type="checkbox" id="startup-greeting-toggle" checked>
         Play "Good morning" greeting on startup
@@ -4942,6 +4949,8 @@ const MINI_CHAT_PAD = 3;
     uiClick:       'assets/sfx/UI Click.wav',
     uiClick2:      'assets/sfx/UI Click 2.wav',
     uiHover:       'assets/sfx/UI Hover.wav',
+    innerClick:    'assets/sfx/interface click.wav',
+    innerHover:    'assets/sfx/ui hov.wav',
   };
   // Per-clip trim, on top of the volume slider. Mixing is done in the
   // clips themselves; this is only for the ones that still sit wrong
@@ -7881,6 +7890,45 @@ const MINI_CHAT_PAD = 3;
   // repeat, and swapping between them makes the menu feel like hardware.
   // Hover fires on mouseenter, so it sounds once per arrival rather than
   // continuously while the pointer sits there.
+  // ---------- Inner UI: everything inside the panels ----------
+  // The core menu's four buttons have their own, heavier sounds. These
+  // are for the small controls behind them - Save Settings, the
+  // checkboxes, the sliders, the chat list, the send button - so opening
+  // settings or working in chat mode feels like the same machine at a
+  // smaller scale.
+  //
+  // Delegated from the document rather than bound per control: the panels
+  // rebuild their contents constantly (the chat list, the voice-line
+  // toggles, the memory list are all re-rendered from data), and anything
+  // bound directly would go silent the moment its element was replaced.
+  const INNER_UI_SEL = [
+    'button', 'select', 'summary', 'a[href]',
+    'input[type="checkbox"]', 'input[type="radio"]', 'input[type="range"]',
+    '.topic-item', '.wheel-item-label',
+  ].join(',');
+
+  function innerUiTarget(e) {
+    const t = e.target;
+    if (!t || !t.closest) return null;
+    const el = t.closest(INNER_UI_SEL);
+    if (!el) return null;
+    // The core menu is not "inner UI" - it has its own sounds, and
+    // playing both on one click would double up.
+    if (el.closest('.wheel-item') || el.closest('#wheel-close')) return null;
+    return el;
+  }
+
+  let innerHoverEl = null;
+  document.addEventListener('mouseover', (e) => {
+    const el = innerUiTarget(e);
+    if (el === innerHoverEl) return;
+    innerHoverEl = el;
+    if (el) playSfx('innerHover');
+  });
+  document.addEventListener('click', (e) => {
+    if (innerUiTarget(e)) playSfx('innerClick');
+  });
+
   let uiClickAlt = false;
   function playUiClick() {
     uiClickAlt = !uiClickAlt;
@@ -8200,6 +8248,10 @@ const MINI_CHAT_PAD = 3;
     // standard <input>, so the generic scan above doesn't see it.
     const pttBtn = document.getElementById('ptt-rebind-btn');
     if (pttBtn) out['ptt-combo'] = pttBtn.dataset.combo;
+    // Per-sound levels are a MAP, not one control's value - the generic
+    // scan above would only ever capture whichever sound the picker
+    // happened to be showing.
+    out['sfx-gains'] = JSON.stringify(SFX_GAIN);
     // Caption position - dragged, not an <input>, so like ptt-combo it
     // has to be picked up explicitly. Read from the live layout rather
     // than the inline style, so it is captured correctly even before the
@@ -8215,6 +8267,18 @@ const MINI_CHAT_PAD = 3;
   }
   function applySettings(saved) {
     if (!saved || typeof saved !== 'object') return;
+    if (typeof saved['sfx-gains'] === 'string') {
+      try {
+        const g = JSON.parse(saved['sfx-gains']);
+        Object.keys(g).forEach((k) => {
+          const v = parseFloat(g[k]);
+          if (isFinite(v)) SFX_GAIN[k] = Math.max(0, Math.min(2, v));
+        });
+        if (sfxPick && sfxGainSlider) {
+          sfxGainSlider.value = Math.round(currentGain(sfxPick.value) * 100);
+        }
+      } catch (err) { /* a corrupt blob must not stop the rest loading */ }
+    }
     settingsSection.querySelectorAll('input').forEach((el) => {
       if (isVoiceListInput(el)) return;
       if (el.type === 'radio') {
@@ -9012,6 +9076,67 @@ const MINI_CHAT_PAD = 3;
   });
 
   const sfxToggle = document.getElementById('sfx-toggle');
+  // ---------- Per-sound levels ----------
+  // The master slider moves everything together; this is for when one
+  // clip sits wrong against the rest, which is a mixing job and belongs
+  // to Krazaa rather than to a number I picked in the source.
+  const SFX_LABELS = {
+    startup:       'Startup',
+    coreOpen:      'Core menu - open',
+    coreClose:     'Core menu - close',
+    uiHover:       'Core menu - hover',
+    uiClick:       'Core menu - click',
+    uiClick2:      'Core menu - click (2)',
+    panelOpen:     'Panel - open',
+    panelClose:    'Panel - close',
+    innerHover:    'Inner UI - hover',
+    innerClick:    'Inner UI - click',
+    overlayAppear: 'Overlay appears',
+    thinking:      'Thinking (loop)',
+  };
+  const sfxPick = document.getElementById('sfx-pick');
+  const sfxGainSlider = document.getElementById('sfx-gain');
+
+  function currentGain(name) {
+    const g = SFX_GAIN[name];
+    return (typeof g === 'number' && isFinite(g)) ? g : 1;
+  }
+  if (sfxPick) {
+    Object.keys(SFX_LABELS).forEach((name) => {
+      if (!SFX_FILES[name]) return;         // skip anything not shipped
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = SFX_LABELS[name];
+      sfxPick.appendChild(opt);
+    });
+    const syncSlider = () => {
+      if (!sfxGainSlider) return;
+      sfxGainSlider.value = Math.round(currentGain(sfxPick.value) * 100);
+    };
+    syncSlider();
+    sfxPick.addEventListener('change', syncSlider);
+  }
+  if (sfxGainSlider && sfxPick) {
+    sfxGainSlider.addEventListener('input', () => {
+      const name = sfxPick.value;
+      SFX_GAIN[name] = Math.max(0, Math.min(2,
+        (parseFloat(sfxGainSlider.value) || 0) / 100));
+      // The bed is already playing; follow it live rather than waiting
+      // for the next reply.
+      const bed = sfxPool['thinking'];
+      if (name === 'thinking' && bed && !bed.paused) {
+        try { bed.volume = Math.max(0, Math.min(1, sfxVolume * SFX_GAIN[name])); }
+        catch (err) { }
+      }
+      scheduleSaveSettings();
+    });
+    // On release, not on every pixel of the drag - otherwise it stutters
+    // over itself while the slider moves.
+    sfxGainSlider.addEventListener('change', () => {
+      if (sfxPick.value !== 'thinking') playSfx(sfxPick.value);
+    });
+  }
+
   const uiSfxToggle = document.getElementById('ui-sfx-toggle');
   const uiSfxVolume = document.getElementById('ui-sfx-volume');
   if (uiSfxToggle) {
