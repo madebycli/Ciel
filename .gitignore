@@ -48,6 +48,9 @@ memory.txt
 .jbb_cache/
 build/
 dist/
+# Split archives for a GitHub release - gigabytes of build output,
+# rebuilt by package_release.py whenever they are needed.
+release/
 *.spec.bak
 
 # Python 3.11 venv holding PySide6 6.4.3 for the transparent overlay.
