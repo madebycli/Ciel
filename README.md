@@ -34,9 +34,15 @@ process on 3.11 and the main app runs on 3.14. See `NOTES.md`.
 
 ## Install
 
+**[Full step-by-step guide, with troubleshooting -> INSTALL.md](INSTALL.md)**
+Start there if anything goes wrong, particularly if it replies in text but
+never speaks.
+
+The short version:
+
 ```bash
-git clone <this repo>
-cd "GREAT SAGE"
+git clone https://github.com/shogunyan12/The-GREAT-SAGE.git
+cd The-GREAT-SAGE
 
 # torch FIRST, with the CUDA build for your GPU - otherwise pip resolves
 # the CPU build and the voice is unusably slow. Check yours with nvidia-smi.
