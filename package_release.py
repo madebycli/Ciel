@@ -1,12 +1,12 @@
 """Package dist/GreatSage into files a GitHub release can actually hold.
 
-GitHub refuses any release asset over 2 GB. The build is about 5.2 GB and
-compresses to roughly half that, which is still too big for one file - so
-this writes a SPLIT 7-Zip archive in volumes under the limit.
+GitHub refuses any release asset over 2 GB. The build is about 5.2 GB,
+and 7-Zip gets it to roughly 1.9 - so it goes up as ONE file, and this
+only falls back to a split archive if a future build stops fitting.
 
-For whoever downloads it that means: grab every part into one folder,
-right-click the .001, "Extract Here", run GreatSage.exe. 7-Zip pulls the
-other volumes in on its own; there is nothing to join by hand.
+For whoever downloads it that means: right-click, "Extract Here", run
+GreatSage.exe. If it ever does split, the read-me written beside the
+parts says so and 7-Zip pulls the volumes in on its own.
 
     py package_release.py
 
@@ -29,23 +29,22 @@ ARCHIVE = os.path.join(OUT, "GreatSage.7z")
 # cheaper than discovering the last volume is 2.01 GB after an hour of
 # compression and an upload.
 VOLUME = "1900m"
+# GitHub's per-asset ceiling. Compared against the unsplit archive to
+# decide whether splitting is needed at all.
+LIMIT = 2 * 1024 ** 3
 
 SEVENZIP = [
     r"C:\Program Files\7-Zip\7z.exe",
     r"C:\Program Files (x86)\7-Zip\7z.exe",
 ]
 
-READ_ME = """Great Sage - install
+READ_ME_SINGLE = """Great Sage - install
 ====================
 
-1. Put every part (GreatSage.7z.001, .002, ...) in the SAME folder.
-   You need all of them; the parts are one archive, not alternatives.
+1. Right-click GreatSage.7z -> 7-Zip -> "Extract Here".
+   No 7-Zip? https://www.7-zip.org  (Windows cannot open .7z on its own.)
 
-2. Right-click GreatSage.7z.001 -> 7-Zip -> "Extract Here".
-   Only the .001. The rest are pulled in automatically.
-   No 7-Zip? https://www.7-zip.org
-
-3. Open the GreatSage folder and run GreatSage.exe.
+2. Open the GreatSage folder and run GreatSage.exe.
 
 The first time it runs it checks for the three things that cannot be
 bundled - Ollama, the chat model, and Microsoft WebView2 - and offers to
@@ -87,22 +86,46 @@ def main():
     print("  this takes a while - it is 5 GB of DLLs")
 
     started = time.time()
-    # -mx=5 rather than 9: the extra hour of CPU buys a few percent on
-    # binaries that are already mostly incompressible, and the volume
-    # count is what actually matters here.
-    cmd = [sevenzip, "a", "-t7z", "-mx=5", "-mmt=on",
-           "-v" + VOLUME, ARCHIVE, DIST]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    # UNSPLIT FIRST. 5.18 GB of mostly-DLLs came out at 1.87 GB, which
+    # fits in one asset - and one file to download beats two every time.
+    # Splitting is the fallback, not the plan.
+    #
+    # -mx=5 rather than 9: the extra hour buys a few percent on binaries
+    # that are already mostly incompressible.
+    base = [sevenzip, "a", "-t7z", "-mx=5", "-mmt=on"]
+    r = subprocess.run(base + [ARCHIVE, DIST], capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stdout[-2000:])
         print(r.stderr[-2000:])
         raise SystemExit("7-Zip failed (%d)" % r.returncode)
 
+    one = os.path.getsize(ARCHIVE) if os.path.exists(ARCHIVE) else 0
+    if one >= LIMIT:
+        print("  %.2f GB is over the 2 GB asset limit - splitting"
+              % (one / 1073741824))
+        os.remove(ARCHIVE)
+        r = subprocess.run(base + ["-v" + VOLUME, ARCHIVE, DIST],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(r.stderr[-2000:])
+            raise SystemExit("7-Zip failed (%d)" % r.returncode)
+    else:
+        print("  %.2f GB - fits in a single asset, no split needed"
+              % (one / 1073741824))
+
+    split = not os.path.exists(ARCHIVE)
+    text = READ_ME_SINGLE
+    if split:
+        text = text.replace(
+            '1. Right-click GreatSage.7z -> 7-Zip -> "Extract Here".',
+            "1. Put EVERY part (GreatSage.7z.001, .002, ...) in the same" + chr(10)
+            + "   folder - they are one archive, not alternatives. Then" + chr(10)
+            + '   right-click the .001 -> 7-Zip -> "Extract Here".')
     with open(os.path.join(OUT, "READ ME FIRST.txt"), "w",
               encoding="utf-8") as f:
-        f.write(READ_ME)
+        f.write(text)
 
-    parts = sorted(p for p in os.listdir(OUT) if ".7z." in p)
+    parts = sorted(p for p in os.listdir(OUT) if ".7z" in p)
     packed = sum(os.path.getsize(os.path.join(OUT, p)) for p in parts)
     print()
     print("  done in %.0f min" % ((time.time() - started) / 60))
