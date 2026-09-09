@@ -83,6 +83,17 @@ def _search_context(character_id: str | None, query: str) -> int:
     return 0
 
 
+def _bundle_context(character_id: str | None, query: str) -> int:
+    from great_sage.context_graph import render_context_bundle
+    from great_sage.context_graph.runtime import open_project_graph
+
+    runtime = load_runtime(character_id)
+    with open_project_graph(runtime.context_database) as graph:
+        hits = graph.search(query, limit=8, expand_hops=1)
+    print(render_context_bundle(hits, max_chars=12000, per_node_chars=4000))
+    return 0
+
+
 def _show_context_node(character_id: str | None, node_id: str) -> int:
     from great_sage.context_graph.runtime import open_project_graph
 
@@ -137,6 +148,11 @@ def main() -> int:
         help="Search project context and expand one graph hop",
     )
     parser.add_argument(
+        "--context-bundle",
+        metavar="QUERY",
+        help="Render a hard-bounded model context bundle from graph retrieval",
+    )
+    parser.add_argument(
         "--context-node",
         metavar="ID",
         help="Print one indexed project context node",
@@ -159,6 +175,8 @@ def main() -> int:
         return _rebuild_context(args.character)
     if args.context_search:
         return _search_context(args.character, args.context_search)
+    if args.context_bundle:
+        return _bundle_context(args.character, args.context_bundle)
     if args.context_node:
         return _show_context_node(args.character, args.context_node)
     if args.overlay_spike:

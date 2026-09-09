@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from great_sage.context_graph import ContextManifestError, SQLiteContextGraph, load_manifest
+from great_sage.context_graph import (
+    ContextManifestError,
+    SQLiteContextGraph,
+    load_manifest,
+    render_context_bundle,
+)
 
 
 def _write_graph(root: Path) -> None:
@@ -82,3 +87,18 @@ def test_context_manifest_blocks_path_escape(tmp_path: Path):
     )
     with pytest.raises(ContextManifestError):
         load_manifest(root)
+
+
+def test_rendered_bundle_never_exceeds_budget(tmp_path: Path):
+    root = tmp_path / "context"
+    root.mkdir()
+    _write_graph(root)
+    nodes, edges = load_manifest(root)
+
+    with SQLiteContextGraph(tmp_path / "graph.sqlite3") as graph:
+        graph.replace_namespace("project", nodes, edges)
+        hits = graph.search("Wayland", expand_hops=1)
+
+    bundle = render_context_bundle(hits, max_chars=300, per_node_chars=180)
+    assert len(bundle) <= 300
+    assert "CIEL_CONTEXT" in bundle

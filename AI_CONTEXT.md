@@ -27,4 +27,12 @@ For architecture work, do not infer the project from old Windows files. Start wi
 
 ## Performance rule
 
-Do not concatenate every context file into every model prompt. Retrieve a small lexical seed set, expand only a bounded number of graph hops, then pass the resulting nodes to the model.
+Do not concatenate every context file into every model prompt. Retrieve a small lexical seed set, expand only a bounded number of graph hops, then render a hard-bounded context bundle.
+
+Useful development commands:
+
+```bash
+python ciel.py --context-index
+python ciel.py --context-search "character services"
+python ciel.py --context-bundle "Wayland overlay"
+```
