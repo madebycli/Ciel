@@ -8,27 +8,37 @@ venv/
 .venv/
 env/
 ENV/
+.overlay-venv/
+.build311/
+
+# Python tooling and test output
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Editors
+.idea/
+*.swp
+*.swo
 
 # Secrets / local environment overrides
 .env
 *.env.local
+ai_settings.json
 
 # Voice samples, split by what they are FOR.
-#
-# candidates/ IS shipped: those are the voices Great Sage actually speaks
-# with, and the settings panel picks between them. Without them a fresh
-# clone has no reference audio and no voice at all, which is most of the
-# point of the project.
-#
-# my_voice*.* is NOT: raw personal recordings of whoever set this up,
-# kept local.
+# candidates/ IS shipped because those are the voices Ciel actually speaks
+# with. Raw personal recordings stay local.
 voice_samples/*
 !voice_samples/.gitkeep
 !voice_samples/candidates/
 !voice_samples/candidates/**
+my_voice*.*
 
-# Model weights / checkpoints, in case any ever end up in-repo instead of
-# in the global TTS/torch cache.
+# Model weights / checkpoints
 *.pt
 *.pth
 *.onnx
@@ -39,47 +49,28 @@ voice_samples/*
 Thumbs.db
 .DS_Store
 
-# HUD app runtime log (run_hud.py)
-great_sage_hud.log
-
-# Long-term memory file - personal facts about whoever is running this,
-# not something to track in version control.
-memory.txt
-.jbb_cache/
-build/
-dist/
-# Split archives for a GitHub release - gigabytes of build output,
-# rebuilt by package_release.py whenever they are needed.
-release/
-*.spec.bak
-
-# Python 3.11 venv holding PySide6 6.4.3 for the transparent overlay.
-# Recreate with:  py -3.11 -m venv .overlay-venv
-#                 .overlay-venv\Scripts\pip install PySide6==6.4.3
-.overlay-venv/
-
-# Runtime state, per-machine.
+# Runtime logs
 great_sage.log
 great_sage_hud.log
 
-# Abandoned venv from the packaging investigation. The overlay builds from
-# .overlay-venv; this one only ever held pip.
-.build311/
-
-# Per-machine runtime state, not source (spec S0: keep user data separate).
-#
-# Anchored with a leading slash - these are the RUNTIME files at the repo
-# root. Without it the pattern matches at any depth and also swallowed
-# defaults/hud_settings.json, which is the opposite: the tuned settings a
-# fresh install starts from, and the whole reason a download looks like
-# the thing that was built.
+# Personal runtime state
+memory.txt
 /hud_settings.json
 /voice_line_prefs.json
 /chats.json
 /chats.json.bak
+/tasks.json
+.jbb_cache/
 
-# API keys - never commit these.
-ai_settings.json
+# Build output
+build/
+dist/
+release/
+*.spec.bak
 
-# Scheduled reminders and folder watches - personal.
-tasks.json
+# Linux/Nix packaging output
+result
+result-*
+*.AppImage
+*.deb
+*.rpm
