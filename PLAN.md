@@ -4,187 +4,207 @@
 
 Ciel wird als Linux-native, Wayland-first Desktop-Companion-Plattform weiterentwickelt. Windows ist kein Ziel mehr.
 
-Die Anwendung soll nicht auf einen einzelnen Charakter wie Great Sage fest verdrahtet sein. Charaktere werden als deklarative Character-Packs geladen. Ein Pack beschreibt Identität, Prompt, Stimme, Theme und die erlaubten Ciel-Dienste. Die eigentlichen Fähigkeiten bleiben in einer gemeinsamen Engine und werden nicht pro Charakter dupliziert.
+Die Anwendung besteht aus einer gemeinsamen Engine und austauschbaren Character-Packs. Ein Character-Pack beschreibt Identität, Prompt, Stimme, Theme, Assets und erlaubte Dienste. Die eigentlichen Fähigkeiten bleiben gemeinsame Module und werden nicht pro Charakter dupliziert.
 
-Hardware-Ziel ist AMD-first:
+Hardware-Priorität:
 
-1. AMD Radeon / Ryzen mit ROCm, wenn verfügbar
-2. CPU-Fallback ohne GPU-Pflicht
-3. andere GPU-Backends sind später optional, aber kein Architekturtreiber
+1. AMD Radeon / Ryzen mit ROCm, wenn unterstützt und verfügbar
+2. CPU-Fallback
+3. weitere Backends später optional, aber nicht als Architekturtreiber
 
-Der Overlay-Modus wird Linux-nativ über Wayland Layer-Shell umgesetzt. Der vorhandene GIF-Player bleibt Referenz für Layer-Shell, Input-Regionen, XDG-Pfade und Surface-Verhalten.
+Für großen zukünftigen AI-Kontext wird ein Graph-System verwendet. Menschen und Coding-AIs arbeiten mit kleinen Markdown-Kontextknoten und expliziten Beziehungen. Zur Laufzeit wird daraus ein schneller, wegwerfbarer SQLite-Index erzeugt.
 
 ## Anforderungen
 
 ### Muss
 
-- Linux nativ, kein Wine und keine Windows-Runtime
+- Linux nativ, kein Wine
 - Wayland-first
-- Hyprland, Sway und Niri als erste Test-Compositoren
+- Hyprland, Niri und Sway als erste harte Zielumgebungen
 - KDE Plasma Wayland soweit Layer-Shell sauber funktioniert
-- Linux-native XDG-Pfade für Config, Daten, Cache und Runtime
-- transparentes Always-on-top-Overlay über Layer-Shell
+- XDG-Pfade für Config, Daten, Cache und Runtime
+- transparentes Always-on-top-Overlay über gtk-layer-shell
 - vorhandenes Three.js-HUD möglichst weiterverwenden
 - AMD ROCm als primärer GPU-Pfad
-- CPU-Fallback für Modell-, STT- und TTS-Komponenten soweit die jeweilige Bibliothek CPU unterstützt
-- mehrere Character-Packs ohne Änderungen am Core
-- Charakterwechsel ohne Codeänderung, über Config oder UI
-- Stimme, Prompt, Theme und aktivierte Dienste pro Charakter konfigurierbar
-- Dienste über eine zentrale Allowlist, kein beliebiger Python-Code aus Character-Packs
+- CPU-Fallback auf Engine-Ebene
+- mehrere Character-Packs ohne Core-Forks
+- Charakterwechsel über Konfiguration oder UI
+- Stimme, Prompt, Theme und Dienste pro Charakter konfigurierbar
+- zentrale Service-Allowlist
+- Context-Graph mit begrenztem Retrieval statt vollständiger Prompt-Injektion
 - lokale Daten und Secrets außerhalb des Repositorys
 
 ### Soll
 
-- Charakter-spezifische Chats und UI-Einstellungen
-- wahlweise gemeinsames oder charakter-spezifisches Langzeitgedächtnis
-- Portal-basierte Screenshots und Screen-Capture
+- charakter-spezifische Chats und UI-Einstellungen
+- gemeinsames oder charakter-spezifisches Langzeitgedächtnis
+- Graph-Namespaces für `project`, `character:<id>`, `user` und spätere Sessions
+- XDG Desktop Portal für Screenshots und Screen-Capture
 - globale Shortcuts über Portal oder explizite Compositor-Integration
 - Audio über PipeWire/PulseAudio-kompatible Linux-Backends
 - Nix als erstes reproduzierbares Entwickler- und Packaging-Ziel
-- später AppImage oder distro-native Pakete
+- später optional Embedding-Retrieval als zusätzlicher Graph-Seed-Generator
 
 ### Nicht-Ziele
 
 - Windows-Unterstützung
 - X11 als primäres Ziel
 - GNOME-Layer-Shell-Hacks
-- Character-Packs, die beliebigen Python-Code automatisch laden
-- eine eigene KI-Engine pro Charakter
+- Character-Packs mit automatisch ausführbarem Python-Code
+- eigene KI-Engine pro Charakter
+- Context-Datenbank als Source of Truth
 - Cloud-Zwang
 
-### Sicherheit
+## Sicherheit
 
 - Character-Packs sind Daten, kein ausführbarer Plugin-Code
 - Pfade innerhalb eines Character-Packs dürfen dessen Verzeichnis nicht verlassen
-- Dienste werden gegen eine zentrale Service-Allowlist validiert
+- Context-Dateipfade dürfen `context/` nicht verlassen
+- Dienste werden gegen eine zentrale Allowlist validiert
 - Desktop-, Screen- und Web-Dienste bleiben permission-sensitiv
-- keine Modellantwort darf direkt als Shell-Befehl ausgeführt werden
-- Runtime-Sockets und Runtime-Verzeichnisse gehören nur dem aktuellen Benutzer
-- Screen-Capture läuft über das Wayland-/Portal-Berechtigungsmodell
+- Modellantworten werden niemals direkt als Shell-Befehl ausgeführt
+- Runtime-Verzeichnisse und spätere Sockets gehören nur dem aktuellen Benutzer
+- Screen-Capture folgt dem Wayland-/Portal-Berechtigungsmodell
+- `legacy/windows/` ist Referenzcode und darf von neuem Runtime-Code nicht importiert werden
 
-### Skalierbarkeit
+## Skalierbarkeit
 
-Neue Charaktere sollen nur neue Daten und Assets benötigen. Der Chat-Core, das Overlay, der Model-Provider, STT/TTS und Desktop-Dienste werden gemeinsam genutzt. Dadurch wächst die Codebasis nicht linear mit der Zahl der Charaktere.
+### Character-System
 
-### Kosten
+Neue Charaktere sollen hauptsächlich Daten und Assets hinzufügen. Chat-Core, Model-Provider, Voice, STT, Overlay, Desktop-Dienste und Context-Retrieval bleiben gemeinsam.
 
-Die Basis bleibt lokal und Open Source. Character-Packs erzeugen keine laufenden Kosten. Cloud-Provider dürfen später optional als Services konfigurierbar sein. ROCm und CPU bleiben die primären lokalen Compute-Pfade.
+### Context-System
+
+Der Wissensbestand darf wachsen, ohne dass der Prompt linear wächst.
+
+Retrieval-Pipeline:
+
+```text
+User/Agent query
+  -> FTS5 lexical seed search
+  -> kleine Seed-Menge
+  -> begrenzte Graph-Expansion
+  -> Ranking
+  -> hartes Gesamtbudget + Pro-Knoten-Budget
+  -> Model context bundle
+```
+
+Die Markdown-Dateien bleiben Source of Truth. SQLite ist nur ein Cache und kann jederzeit neu gebaut werden.
+
+Die Datenbank unterstützt Namespaces, damit später Projektwissen, Charakterwissen und Nutzerwissen ohne ID-Kollisionen gemeinsam indexiert werden können.
+
+## Kosten
+
+Die Basis bleibt lokal und Open Source. Character-Packs und der SQLite-Context-Graph erzeugen keine laufenden Cloud-Kosten. ROCm und CPU bleiben die primären lokalen Compute-Pfade.
 
 ## Architekturansätze
 
-### Ansatz A: Modulare Python-Engine + deklarative Character-Packs + GTK/Layer-Shell
+### Ansatz A: Modulare Python-Engine + Character-Packs + GTK/Layer-Shell + Context-Graph
 
 #### Tech-Stack
 
 - Python 3.12 oder 3.13 als bevorzugte Baseline
-- vorhandener Chat-/Model-/Voice-Core, schrittweise entkoppelt
+- vorhandener provider-unabhängiger Chat-Core
 - Character-Packs als JSON + Markdown + Assets
-- GTK3/WebKitGTK für den ersten HUD-Port
-- GtkLayerShell für Overlay-Surfaces
+- GTK3 + WebKitGTK für die erste native UI
+- gtk-layer-shell für Overlay-Surfaces
 - PyGObject/GIO für Linux-Integration
-- XDG Desktop Portals für Screen-Capture und globale Shortcuts, wo verfügbar
+- XDG Desktop Portals für sensitive Desktop-Funktionen
 - PyTorch ROCm für AMD-Beschleunigung
-- CPU als garantierter Fallback-Pfad auf Engine-Ebene
-- Nix für reproduzierbare Dev-Umgebung und Packaging
+- CPU als Fallback
+- SQLite + FTS5 für Context-Retrieval
+- Markdown + `context/graph.json` als Context-Source-of-Truth
+- Nix später für reproduzierbare Umgebung und Packaging
 
 #### Komponenten und Datenfluss
 
 ```text
 ciel.py
   -> RuntimeContext
-      -> CharacterLoader -> characters/<id>/character.json + prompt.md + assets
-      -> ServiceRegistry -> erlaubte gemeinsame Dienste
-      -> Accelerator     -> ROCm oder CPU
-      -> LinuxPlatform   -> XDG + Wayland + Portal/Compositor
+      -> CharacterLoader
+      -> ServiceRegistry
+      -> Accelerator
+      -> LinuxPlatform
+      -> ContextGraph path
+
   -> Core
       -> ModelProvider
+      -> ChatEngine
       -> Memory
-      -> Tools/Services
       -> Voice/STT
+      -> Tools/Services
+
+  -> ContextGraph
+      -> Markdown nodes
+      -> graph.json
+      -> SQLite FTS5 cache
+      -> bounded graph retrieval
+
   -> Linux UI Host
-      -> WebKitGTK -> bestehendes Three.js-HUD
-      -> GtkLayerShell -> Overlay
+      -> GTK3
+      -> WebKitGTK
+      -> Three.js HUD
+      -> gtk-layer-shell overlay
 ```
 
 #### Vorteile
 
-- einfachster Weg vom aktuellen Python-Core zu Linux
-- GIF-Player-Wissen ist direkt nutzbar
-- Charaktere bleiben leichtgewichtig
-- keine Code-Duplizierung pro Charakter
-- AMD/CPU kann unabhängig von der UI behandelt werden
-- gute Testbarkeit, weil Loader, Registry und Hardware-Erkennung displayfrei sind
+- nutzt den wertvollen bestehenden Python-Core
+- kein unnötiger Rewrite
+- Character-Packs bleiben leichtgewichtig
+- Context wächst ohne lineares Prompt-Wachstum
+- GIF-Player-Technik ist für Layer-Shell direkt relevant
+- AMD/CPU bleibt von UI und Charakter getrennt
+- displayfreie Module sind gut testbar
 
 #### Nachteile
 
-- WebKitGTK muss mit dem bestehenden Three.js/WebGL-HUD praktisch getestet werden
+- WebKitGTK + Three.js muss auf realer AMD-/Wayland-Hardware visuell getestet werden
 - GTK3 ist nicht die modernste GTK-Version
-- Layer-Shell funktioniert nicht auf jedem Wayland-Compositor
+- Layer-Shell ist compositorabhängig
+- bestehender Voice-Code enthält noch globale Great-Sage-Konfiguration
 
 #### Komplexität
 
 Mittel
 
-### Ansatz B: Rust Linux-Shell + Python AI-Core + Character-Packs
+### Ansatz B: Rust Linux-Shell + Python AI-Core
 
-#### Tech-Stack
+Rust übernimmt Wayland, Layer-Shell und Portals, Python bleibt AI-/Voice-Dienst über IPC.
 
-- Rust für Wayland-Fenster, Layer-Shell, Portals und Desktop-Integration
-- Python als separater AI-/Voice-Dienst
-- IPC zwischen Rust-Shell und Python-Core
-- Character-Packs bleiben identisch deklarativ
-- ROCm/CPU im Python-Compute-Service
+Vorteile:
 
-#### Komponenten und Datenfluss
+- langfristig starke native Shell
+- klare Prozessgrenzen
 
-```text
-Rust Shell
-  -> Wayland / Layer-Shell / Portals
-  -> WebView / UI
-  -> IPC
-Python Core Service
-  -> Character Pack
-  -> Model / Voice / Memory / Tools
-  -> ROCm / CPU
-```
-
-#### Vorteile
-
-- langfristig sehr native Linux-Shell
-- starke Prozess- und Typgrenzen
-- gute Kontrolle über Wayland
-
-#### Nachteile
+Nachteile:
 
 - deutlich größerer Rewrite
-- zwei Sprachen und IPC von Anfang an
-- viel Infrastruktur, bevor vorhandene Funktionen wieder laufen
-- für den aktuellen Scope unnötig teuer
+- zwei Sprachen und IPC sofort nötig
+- langsamere Wiederverwendung des vorhandenen Projekts
 
-#### Komplexität
+Komplexität: hoch
 
-Hoch
-
-## Architektur, gewählter Ansatz
+## Gewählter Ansatz
 
 Ansatz A wird umgesetzt.
 
-Die Entscheidung folgt aus dem aktuellen Projekt und dem vorhandenen GIF-Player: Der wertvolle Teil von Ciel ist bereits Python, und die funktionierende Layer-Shell-Erfahrung existiert ebenfalls in Python/GTK. Ein Rust-Rewrite würde vor allem funktionierenden Code ersetzen, bevor der Linux-Port überhaupt bewiesen ist.
+Der aktuelle Code bestätigt die Richtung: Character-Loader, Service-Registry, AMD-first Hardware-Erkennung, XDG-/Wayland-Erkennung, Context-Graph und der erste GTK/WebKitGTK/Layer-Shell-Overlay-Spike existieren bereits.
 
-AMD-first wird als Compute-Policy behandelt, nicht in einzelne TTS-/STT-Module hartcodiert. `detect_accelerator()` liefert ROCm oder CPU. Wichtig: PyTorch verwendet auch unter ROCm den Device-String `cuda`; AMD wird deshalb über `torch.version.hip` erkannt.
+Ein Rust-Shell-Rewrite bleibt nur eine spätere Alternative, falls GTK/WebKitGTK nach echten Hardwaretests grundlegende Probleme zeigt.
 
 ## Character-Pack-Modell
 
 ```text
 characters/
-  great_sage/
+  <id>/
     character.json
     prompt.md
-    voice/
-    ui/
+    voice/      optional
+    ui/         optional
 ```
 
-`character.json` enthält nur deklarative Daten:
+`character.json` bleibt deklarativ und enthält unter anderem:
 
 - `id`
 - `display_name`
@@ -195,128 +215,155 @@ characters/
 - `services`
 - `metadata`
 
-Character-Packs dürfen niemals automatisch Python-Dateien importieren. Neue Fähigkeiten kommen als geprüfte Ciel-Services in `great_sage/services/` hinzu. Ein Charakter darf diese Dienste nur auswählen.
+Neue Fähigkeiten werden in `great_sage/services/` implementiert und danach von Character-Packs ausgewählt.
 
-Beispiel:
+UNKLAR: Für Anime-bezogene Bilder, Sprachsamples und andere geschützte Assets muss geklärt werden, welche Inhalte selbst erstellt, lizenziert oder nur lokal vom Nutzer eingebunden werden.
 
-```json
-{
-  "id": "my_character",
-  "display_name": "My Character",
-  "prompt_file": "prompt.md",
-  "services": ["chat", "voice", "memory", "overlay"]
-}
+## Context-Graph
+
+### Source of Truth
+
+```text
+AI_CONTEXT.md
+AGENTS.md
+CLAUDE.md
+context/
+  graph.json
+  nodes/
+    project.md
+    architecture.md
+    linux-native.md
+    characters.md
+    services.md
+    context-graph.md
+    compute.md
 ```
 
-Damit kann später ein weiterer Anime-inspirierter Charakter einen anderen Prompt, eine andere Stimme, Farben und andere freigeschaltete Dienste bekommen, ohne `ChatEngine` zu forken.
+`AGENTS.md` und `CLAUDE.md` enthalten bewusst keine zweite vollständige Architektur. Sie verweisen auf denselben Graphen.
 
-UNKLAR: Für Charakterbilder, Sprachsamples und andere geschützte Medien muss geklärt werden, welche Assets selbst erstellt, lizenziert oder nur lokal vom Nutzer eingebunden werden.
+### Runtime-Index
+
+```text
+$XDG_CACHE_HOME/ciel/context/graph.sqlite3
+```
+
+Der Index nutzt:
+
+- SQLite WAL
+- FTS5, wenn verfügbar
+- LIKE-Fallback ohne FTS5
+- indizierte Kanten in beide Traversierungsrichtungen
+- Namespaces
+- maximal begrenzte Graph-Hops
+- hartes Rendering-Budget
+
+CLI:
+
+```bash
+python ciel.py --context-index
+python ciel.py --context-search "Wayland overlay"
+python ciel.py --context-bundle "character services"
+python ciel.py --context-node context-graph
+```
 
 ## Dateistruktur
 
 ```text
 Ciel/
-├── ciel.py
+├── AI_CONTEXT.md
+├── AGENTS.md
+├── CLAUDE.md
 ├── PLAN.md
-├── pyproject.toml
-├── requirements.txt
+├── ciel.py
+├── context/
+│   ├── graph.json
+│   └── nodes/
 ├── characters/
-│   ├── README.md
-│   └── great_sage/
-│       ├── character.json
-│       └── prompt.md
+│   ├── great_sage/
+│   └── ciel/
 ├── great_sage/
 │   ├── characters/
-│   │   ├── model.py
-│   │   └── loader.py
+│   ├── context_graph/
 │   ├── hardware/
-│   │   └── accelerator.py
 │   ├── services/
-│   │   └── registry.py
 │   ├── platform/
-│   │   └── linux.py
 │   ├── core/
 │   ├── models/
 │   ├── voice/
 │   └── ui/
 │       └── linux/
-│           ├── main_window.py
 │           └── overlay.py
+├── docs/
+│   └── linux/
 ├── tests/
-│   ├── unit/
-│   └── integration/
 └── legacy/
     └── windows/
 ```
 
-## Erste 3 Dateien
-
-Die ersten drei produktiven Bausteine sind:
-
-1. `great_sage/characters/loader.py`
-   - lädt Character-Packs
-   - validiert Manifest, IDs, Assets und Pfade
-   - verhindert Path Traversal
-
-2. `great_sage/hardware/accelerator.py`
-   - zentrale AMD-first Compute-Erkennung
-   - ROCm über `torch.version.hip`
-   - CPU-Fallback
-   - kein CUDA/NVIDIA-Zwang in Feature-Modulen
-
-3. `great_sage/platform/linux.py`
-   - XDG-Pfade
-   - Wayland-/Compositor-Erkennung
-   - Basis für Portal-, Shortcut- und Layer-Shell-Integration
-
 ## Umsetzungsschritte
 
-1. Linux-native Branch als neue Entwicklungsbasis festlegen.
-2. Character-Pack-Modell und Loader einführen.
-3. Great Sage als erstes Character-Pack abbilden.
-4. zentrale Service-Allowlist einführen.
-5. AMD-first Accelerator-Erkennung einführen und CPU-Fallback definieren.
-6. XDG- und Wayland-Runtime-Basis einführen.
-7. neue Linux-native `ciel.py` als Entwicklungs-Entry-Point einführen.
-8. Unit-Tests für Character-Loader, Path Traversal, Service-Allowlist und Accelerator ergänzen.
-9. alte Windows-Packaging- und Window-Dateien nach `legacy/windows/` verschieben, sobald keine neue Linux-Datei sie mehr importiert.
-10. Great-Sage-Prompt und Voice-Konfiguration vollständig aus `config/settings.py` in das Character-Pack ziehen.
-11. Memory-, Chat- und HUD-Settings um Character-ID scopen.
-12. Voice-Factory so umbauen, dass Character-Voice-Konfiguration statt globaler Great-Sage-Konstanten verwendet wird.
-13. F5-TTS gegen ROCm testen. Device-Auswahl ausschließlich über die zentrale Accelerator-Schicht führen.
-14. schnellen CPU-Voice-Fallback definieren, falls F5 auf CPU für den Alltag zu langsam ist.
-15. bestehenden Three.js-HUD-Code auf Character-Theme und Character-Metadaten umstellen.
-16. GTK/WebKitGTK-Hauptfenster-Spike bauen und WebGL/Shader testen.
-17. GtkLayerShell-Overlay-Spike bauen, orientiert am GIF-Player.
-18. Click-through über Wayland-Input-Regionen implementieren.
-19. Overlay-Positionierung, Multi-Monitor und Scaling testen.
-20. globale Push-to-talk-Integration über Portal prüfen, Hyprland/Niri/Sway-Fallbacks danach ergänzen.
-21. Desktop-Tools auf Linux umstellen: XDG application discovery, `xdg-open`/GIO statt Start Menu und `os.startfile`.
-22. Screen-Capture auf XDG Desktop Portal/PipeWire umstellen.
-23. Windows-spezifische Core-Dateien entfernen, sobald Linux-Ersatz vorhanden ist.
-24. Nix-DevShell und reproduzierbares Linux-Paket ergänzen.
-25. Character-Auswahl ins HUD bringen.
-26. zweites neutrales Test-Character-Pack hinzufügen, um sicherzustellen, dass kein Great-Sage-Hardcoding übrig ist.
-27. danach erst echte weitere Charakter-Packs mit eigenen Assets ergänzen.
+1. [x] Linux-native Entwicklungsbranch erstellen.
+2. [x] Character-Pack-Modell und sicheren Loader einführen.
+3. [x] Great Sage als Character-Pack abbilden.
+4. [x] zweites neutrales `ciel`-Pack als Hardcoding-Test ergänzen.
+5. [x] zentrale Service-Allowlist einführen.
+6. [x] AMD-first ROCm/CPU-Erkennung einführen.
+7. [x] XDG- und Wayland-Runtime-Basis einführen.
+8. [x] Linux-native `ciel.py` einführen.
+9. [x] Windows-Host und Packaging nach `legacy/windows/` verschieben.
+10. [x] AI-Einstiegspunkte auf einen gemeinsamen Context-Graph vereinheitlichen.
+11. [x] Markdown + `context/graph.json` als versionierte Context-Basis einführen.
+12. [x] SQLite FTS5 + Graph-Retrieval implementieren.
+13. [x] hartes Context-Bundle-Budget implementieren.
+14. [x] nativen GTK/WebKitGTK/gtk-layer-shell Overlay-Spike implementieren.
+15. [ ] Overlay-Spike auf Hyprland mit realer AMD-GPU testen: Transparenz, WebGL, Shader, Animation.
+16. [ ] Danach Input-Regionen und Click-through aus dem GIF-Player-Konzept portieren.
+17. [ ] Dragging, Positionierung, Multi-Monitor und Scaling portieren.
+18. [ ] Hauptfenster als Linux-nativen WebKitGTK-Host implementieren.
+19. [ ] Three.js-HUD von Great-Sage-Hardcoding auf Character-Theme und Character-Metadaten umstellen.
+20. [ ] Great-Sage-Prompt und Voice-Konfiguration vollständig aus `config/settings.py` herausziehen.
+21. [ ] Memory, Chats und HUD-Settings um Character-ID scopen.
+22. [ ] zentrale Voice-Factory mit RuntimeContext bauen.
+23. [ ] F5-TTS an den zentralen Accelerator anbinden und ROCm praktisch testen.
+24. [ ] CPU-Voice-Fallback definieren und messen.
+25. [ ] Desktop-Tools Linux-nativ machen: `.desktop`, GIO, `xdg-open`.
+26. [ ] Screen-Capture über XDG Desktop Portal/PipeWire implementieren.
+27. [ ] globale Push-to-talk-Integration über Portal prüfen, Compositor-Fallbacks danach ergänzen.
+28. [ ] Character-Auswahl ins HUD bringen.
+29. [ ] Context-Namespaces für Character- und Nutzerwissen produktiv verdrahten.
+30. [ ] optional Embedding-Retrieval als zusätzlichen Seed-Generator evaluieren.
+31. [ ] Nix-DevShell und reproduzierbares Linux-Paket ergänzen.
+32. [ ] verbleibende alte Windows-/Great-Sage-Core-Abhängigkeiten entfernen.
 
-## Aktueller Entwicklungsstand
+## Teststrategie
 
-Bereits als Grundlage umgesetzt:
+Displayfrei:
 
-- `great_sage/characters/`: deklaratives Character-Modell und sicherer Loader
-- `great_sage/services/`: zentrale Service-Allowlist
-- `great_sage/hardware/`: AMD-first ROCm/CPU-Erkennung
-- `great_sage/platform/linux.py`: XDG- und Wayland-Erkennung
-- `great_sage/runtime.py`: zusammengesetzter RuntimeContext
-- `characters/great_sage/`: erstes Character-Pack
-- `ciel.py`: Linux-native Diagnose- und Character-Entry-Point-Basis
-- Unit-Tests für Loader, Path Traversal, Services und CPU-Selection
+- Character-Manifest-Validierung
+- Path-Traversal-Schutz
+- Service-Allowlist
+- Accelerator-Auswahl
+- Context-Manifest-Validierung
+- Graph-Suche und Hop-Limit
+- Context-Budget
+
+Mit Wayland-Display:
+
+- WebKitGTK WebGL
+- Transparenz
+- Three.js Shader
+- Layer-Shell-Platzierung
+- Click-through/Input-Region
+- Multi-Monitor
+- HiDPI/Scaling
+- Audio und Portal-Dialoge
 
 ## Offene Fragen / Unklarheiten
 
-- UNKLAR: Welche AMD-GPU ist das erste konkrete Testgerät? ROCm-Support hängt vom genauen Radeon-/Ryzen-Modell ab.
-- UNKLAR: Soll das erste Release nur Hyprland unterstützen oder Hyprland, Niri und Sway gleichzeitig als harte Release-Gates haben?
-- UNKLAR: Soll Langzeitgedächtnis standardmäßig zwischen Charakteren geteilt werden oder pro Charakter getrennt sein?
-- UNKLAR: Soll ein Charakter seinen bevorzugten Ollama-Modellnamen festlegen dürfen oder soll das Modell immer eine globale Nutzereinstellung bleiben?
-- UNKLAR: Welche Voice-Engine soll der garantierte CPU-Fallback sein, wenn F5-TTS ohne ROCm nicht interaktiv schnell genug ist?
-- UNKLAR: Werden Character-Packs nur lokal verwaltet oder soll später ein installierbares Pack-Format mit Registry entstehen?
+- UNKLAR: Welches konkrete AMD-GPU-/APU-Modell ist das erste ROCm-Testgerät?
+- UNKLAR: Welche Distribution ist die primäre Dev-/Release-Basis, Arch, NixOS, Fedora oder Ubuntu?
+- UNKLAR: Soll Release 1 nur Hyprland als hartes Gate haben oder zusätzlich Niri und Sway?
+- UNKLAR: Soll Langzeitgedächtnis standardmäßig zwischen Charakteren geteilt oder getrennt sein?
+- UNKLAR: Soll ein Character-Pack ein bevorzugtes Ollama-Modell vorschlagen dürfen oder bleibt das Modell immer Nutzerkonfiguration?
+- UNKLAR: Welche Voice-Engine ist der garantierte CPU-Fallback, wenn F5-TTS ohne ROCm nicht interaktiv schnell genug ist?
+- UNKLAR: Werden Character-Packs später als installierbares Pack-Format mit Registry verteilt oder ausschließlich lokal verwaltet?
