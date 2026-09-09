@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "nodes": [
+    {"id":"project","path":"nodes/project.md","title":"Project","kind":"project","scope":"project","tags":["ciel","overview","goals"]},
+    {"id":"architecture","path":"nodes/architecture.md","title":"Architecture","kind":"architecture","scope":"project","tags":["modules","runtime","boundaries"]},
+    {"id":"linux-native","path":"nodes/linux-native.md","title":"Linux Native","kind":"platform","scope":"project","tags":["linux","wayland","gtk","webkitgtk","layer-shell"]},
+    {"id":"characters","path":"nodes/characters.md","title":"Character System","kind":"subsystem","scope":"project","tags":["characters","persona","voice","theme"]},
+    {"id":"services","path":"nodes/services.md","title":"Service System","kind":"subsystem","scope":"project","tags":["services","capabilities","security"]},
+    {"id":"context-graph","path":"nodes/context-graph.md","title":"Context Graph","kind":"subsystem","scope":"project","tags":["context","graph","retrieval","sqlite","ai"]},
+    {"id":"compute","path":"nodes/compute.md","title":"Compute Backend","kind":"hardware","scope":"project","tags":["amd","rocm","cpu","pytorch"]}
+  ],
+  "edges": [
+    {"source":"project","target":"architecture","relation":"described_by","weight":1.0},
+    {"source":"architecture","target":"linux-native","relation":"targets","weight":1.0},
+    {"source":"architecture","target":"characters","relation":"contains","weight":0.95},
+    {"source":"architecture","target":"services","relation":"contains","weight":0.95},
+    {"source":"architecture","target":"context-graph","relation":"contains","weight":0.95},
+    {"source":"architecture","target":"compute","relation":"uses","weight":0.9},
+    {"source":"characters","target":"services","relation":"selects","weight":0.85},
+    {"source":"context-graph","target":"characters","relation":"scopes","weight":0.75},
+    {"source":"linux-native","target":"compute","relation":"hosts","weight":0.75}
+  ]
+}
