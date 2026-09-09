@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "ciel",
+  "display_name": "Ciel",
+  "description": "Neutral Linux-native Ciel profile used to verify that the core is not hardcoded to Great Sage.",
+  "prompt_file": "prompt.md",
+  "voice": {
+    "engine": "inherit",
+    "language": "en",
+    "translate": false
+  },
+  "theme": {
+    "accent": "#8fc7ff",
+    "background": "#08111c"
+  },
+  "services": ["chat", "memory", "overlay", "web"],
+  "metadata": {
+    "purpose": "modularity-smoke-test"
+  }
+}
