@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "great_sage",
+  "display_name": "Great Sage",
+  "description": "Analytical companion profile migrated from the original Ciel implementation.",
+  "prompt_file": "prompt.md",
+  "voice": {
+    "engine": "inherit",
+    "language": "en",
+    "translate": false
+  },
+  "theme": {
+    "accent": "#78ffd6",
+    "background": "#070d14"
+  },
+  "services": ["chat", "voice", "memory", "desktop", "screen", "reminders", "overlay", "web"],
+  "metadata": {
+    "migration": "legacy-great-sage"
+  }
+}
