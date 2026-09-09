@@ -1,70 +1,62 @@
 # Linux Compatibility Matrix
 
-Status vor dem eigentlichen Port. Diese Datei beschreibt, was wiederverwendbar ist und wo Windows-spezifische Implementierungen ersetzt werden müssen.
+Ciel ist auf dieser Entwicklungsbasis Linux-only. Windows ist kein Release-Ziel mehr. Alte Window-, Installer- und Packaging-Dateien liegen nur noch unter `legacy/windows/` und dürfen von neuem Code nicht importiert werden.
 
 ## Legende
 
-- `REUSE`: voraussichtlich direkt wiederverwendbar
-- `ADAPT`: Logik bleibt, Plattformzugriff muss abstrahiert werden
-- `REPLACE`: Implementierung ist betriebssystemspezifisch
-- `SPIKE`: zuerst technisch verifizieren
+- `REUSE`: plattformneutraler Core, weiterverwenden
+- `ADAPT`: fachliche Logik behalten, Linux-Zugriff ersetzen
+- `REPLACE`: alte Implementierung vollständig durch Linux-native Lösung ersetzen
+- `SPIKE`: vor dem produktiven Port praktisch testen
 
 ## Übersicht
 
 | Bereich | Status | Linux-Aufgabe |
 |---|---|---|
-| `app.py` | ADAPT | Win32-MessageBox-Fallback entfernen/abstrahieren, Pfad-/Frozen-Logik prüfen |
-| `great_sage/server.py` | REUSE | WebSocket-/Bridge-Verhalten unter Linux testen |
-| Chat-/Model-Core | REUSE | Unit-Tests ergänzen |
-| Voice/TTS/STT | ADAPT | PipeWire/PulseAudio/ALSA-Abhängigkeiten, CUDA/ROCm prüfen |
+| Chat-/Model-Core | REUSE | Character-Kontext und Tests ergänzen |
+| WebSocket-Bridge | REUSE | Linux-Integration testen |
+| Character-System | REUSE | neue Packs nur deklarativ ergänzen |
+| Voice/TTS/STT | ADAPT | ROCm/CPU über zentrale Accelerator-Schicht, Linux-Audio testen |
 | `hud_prototype.html` | SPIKE | WebKitGTK + WebGL + Transparenz + Shader testen |
-| `run_hud.py` | REPLACE/ADAPT | Win32 Window Styling und Positionierung auslagern, Linux-Host bauen |
-| `overlay_window.py` | REPLACE | Win32 Click-through, Border- und Window-Style-Code durch Wayland-Lösung ersetzen |
-| `great_sage/core/global_hotkey.py` | REPLACE | XDG Desktop Portal oder expliziten Compositor-Fallback verwenden |
-| `great_sage/core/tools.py` | ADAPT | App-Discovery, Window-Liste, `os.startfile` und File-Manager-Aufruf abstrahieren |
-| `build.py` / PyInstaller-Specs | ADAPT | getrennten Linux-Buildpfad ergänzen |
-| Runtime-Daten im Repo-Verzeichnis | ADAPT | XDG-Pfade verwenden |
+| Hauptfenster | REPLACE | GTK/WebKitGTK Host bauen |
+| Overlay | REPLACE | GtkLayerShell + Wayland-Input-Regionen |
+| globaler Hotkey | REPLACE | Portal oder expliziter Compositor-Fallback |
+| Desktop-Tools | ADAPT | GIO, `.desktop`-Dateien, Portals statt Win32 |
+| Screen-Capture | REPLACE | XDG Desktop Portal + PipeWire |
+| Runtime-Daten | ADAPT | vollständig auf XDG-Pfade umstellen |
+| Packaging | REPLACE | Nix zuerst, später optional AppImage/distro-native Pakete |
 
-## Aktuelle Windows-Kopplungen
+## Hardware-Ziel
 
-### `app.py`
+Die automatische Compute-Reihenfolge ist:
 
-Der Entry Point ist grundsätzlich wiederverwendbar. Die Fehleranzeige verwendet jedoch direkt `ctypes.windll.user32.MessageBoxW`.
+1. AMD ROCm
+2. CPU
 
-Ziel: `app.py` darf keine OS-spezifische GUI-API mehr kennen. Fehleranzeigen gehen über einen kleinen Platform-Service oder fallen auf Logging/STDERR zurück.
+`great_sage/hardware/accelerator.py` erkennt ROCm über `torch.version.hip`. PyTorch verwendet bei ROCm trotzdem den Device-String `cuda`, daher darf die Zeichenkette `cuda` allein niemals als NVIDIA-Erkennung verwendet werden.
 
-### `run_hud.py`
+NVIDIA CUDA ist aktuell kein Release-Gate und kein Architekturtreiber.
 
-Der Haupt-HUD verwendet pywebview, enthält aber viele direkte Win32-Annahmen:
+UNKLAR: Das konkrete erste Radeon-/Ryzen-Testgerät muss noch festgelegt werden. ROCm-Unterstützung hängt vom genauen GPU/APU-Modell ab.
 
-- HWND-Ermittlung
-- `FindWindowW`
-- `GetWindowLongPtrW` / `SetWindowLongPtrW`
-- `SetWindowPos`
-- `MonitorFromWindow`
-- `GetMonitorInfoW`
-- `GetWindowRect`
-- WinForms-spezifische `native.Handle`-/`Invoke`-Pfade
-- Windows-Stylebits für Frame, Popup und Resize
+## Character-Packs
 
-Die WebSocket- und Chat-Integration soll bleiben. Nur der Window-Host wird getrennt.
+Character-Packs liegen unter `characters/<id>/` und sind reine Daten:
 
-### `overlay_window.py`
+- `character.json`
+- `prompt.md`
+- optionale Voice-Assets
+- optionale UI-Assets
 
-Der Overlay-Host ist konzeptionell gut getrennt, technisch aber Windows-spezifisch:
+Sie können bekannte Ciel-Services aktivieren, aber keinen Python-Code automatisch importieren. Das schützt die Vertrauensgrenze zwischen Persona und Systemzugriff.
 
-- PySide6 `QWebEngineView`
-- `Qt.WindowStaysOnTopHint`
-- `WA_TranslucentBackground`
-- Win32 `WS_EX_TRANSPARENT` für Click-through
-- HWND-/Style-Manipulation über `ctypes.windll.user32`
-- Windows-spezifische Workarounds für WebView/ANGLE/Border-Verhalten
+Der alte Great-Sage-Hardcode in `config/settings.py` wird schrittweise abgebaut. Das erste neue Pack unter `characters/great_sage/` beweist bereits den Zielpfad.
 
-Für Wayland darf nicht versucht werden, Win32-Stilbits nachzubauen. Layer-Shell und Input-Regions sind das passende Modell.
+## Noch vorhandene Windows-Kopplungen im Core
 
-### `global_hotkey.py`
+### `great_sage/core/global_hotkey.py`
 
-Komplett Win32-basiert:
+Komplett Win32-basiert und zu ersetzen:
 
 - `RegisterHotKey`
 - `WM_HOTKEY`
@@ -72,41 +64,38 @@ Komplett Win32-basiert:
 - `PeekMessageW`
 - `UnregisterHotKey`
 
-Das Sicherheitsprinzip soll erhalten bleiben: kein permanenter systemweiter Keyboard-Hook.
+Ziel: kein permanenter systemweiter Keyboard-Hook. Erst Portal prüfen, danach gezielte Hyprland/Niri/Sway-Fallbacks.
 
-Linux-Ziel:
+### `great_sage/core/tools.py`
 
-1. Portal-Backend prüfen
-2. Hold/Release-Semantik verifizieren
-3. wenn nötig compositor-spezifischen Fallback explizit als Fallback behandeln
+Plattformneutral beziehungsweise gut wiederverwendbar:
 
-### `tools.py`
-
-Wiederverwendbar:
-
-- Zeit
-- Disk/GPU-Status grundsätzlich
-- Web-URLs
+- Uhrzeit
+- Disk-Status
+- HTTP/HTTPS-URLs
 - YouTube
 - Dateinamensuche
 
-Windows-spezifisch:
+Zu ersetzen:
 
-- sichtbare Fenster über `EnumWindows`
-- installierte Apps aus Start-Menu-`.lnk`
+- `EnumWindows`
+- Start-Menu-`.lnk`-Discovery
 - `os.startfile`
-- File-Explorer-Semantik
+- File-Explorer-spezifisches Verhalten
 
 Linux-Ziel:
 
-- App-Discovery über `.desktop`-Dateien
-- Start über `Gio.AppInfo` oder `gtk-launch`
-- Ordner über `Gio.AppInfo.launch_default_for_uri` oder `xdg-open`
-- `list_running_apps` unter Wayland nicht als garantiert verfügbar behandeln
+- App-Discovery über `.desktop`-Dateien beziehungsweise `Gio.AppInfo`
+- Öffnen über GIO oder `xdg-open`
+- sichtbare Fenster unter Wayland nur anbieten, wenn der Compositor eine saubere API bereitstellt
+
+### Voice
+
+`f5_tts_engine.py` wählt derzeit `cuda` bei `torch.cuda.is_available()`. Das kann auf ROCm bereits funktionieren, weil PyTorch ROCm dieselbe Device-API nutzt. Die Auswahl wird trotzdem in einem nächsten Schritt auf die zentrale Accelerator-Schicht umgestellt, damit AMD/CPU-Policy nicht in einzelnen Voice-Modulen steckt.
 
 ## GIF-Player als technische Referenz
 
-Der GIF-Player ist für den Overlay-Port relevant, weil er bereits folgende Probleme auf Wayland löst:
+Der GIF-Player löst bereits mehrere relevante Wayland-Probleme:
 
 - GTK3 + GtkLayerShell
 - Layer-Shell-Surfaces
@@ -117,44 +106,37 @@ Der GIF-Player ist für den Overlay-Port relevant, weil er bereits folgende Prob
 - stabile Surface während Drag/Animation
 - GLib/GIO-Main-Loop
 - XDG Runtime/Config/Cache/Data-Struktur
-- Runtime-Verzeichnis- und Socket-Rechte
+- restriktive Runtime-/Socket-Rechte
 
-Nicht direkt übertragbar ist das Rendering selbst. GIF-Player rendert Pillow-Frames über Cairo. Ciel muss WebKitGTK oder eine andere Web-Engine in einer Layer-Shell-Surface hosten. Genau das ist der wichtigste frühe Spike.
+Nicht direkt übertragbar ist das Rendering. GIF-Player zeichnet Pillow/Cairo. Ciel muss das bestehende WebGL/Three.js-HUD in WebKitGTK einbetten.
 
 ## Compositor-Matrix
 
-| Umgebung | Erwartung | Hinweis |
+| Umgebung | Zielstatus | Hinweis |
 |---|---|---|
-| Hyprland | Ziel | Layer-Shell vorhanden |
-| Sway | Ziel | wlroots + Layer-Shell |
-| Niri | Ziel | vorhandener GIF-Player dient als Referenz |
-| KDE Plasma Wayland | Ziel | Layer-Shell grundsätzlich verfügbar, testen |
-| GNOME Wayland | eingeschränkt | kein regulärer Layer-Shell-Support, Fallback nötig |
-| X11 | UNKLAR | nur implementieren, wenn ausdrücklich Release-Ziel |
+| Hyprland | primär | Layer-Shell, erstes Release-Gate |
+| Niri | primär | GIF-Player-Erfahrung vorhanden |
+| Sway | primär | wlroots + Layer-Shell |
+| KDE Plasma Wayland | sekundär | Layer-Shell testen |
+| GNOME Wayland | kein erstes Ziel | kein regulärer Layer-Shell-Pfad |
+| X11 | kein Ziel | nicht implementieren, solange kein konkreter Bedarf entsteht |
 
-## Erster technischer Spike
+## Erster UI-Spike
 
-Der erste ausführbare Linux-Code soll bewusst klein bleiben:
-
-1. GTK3-Fenster erzeugen
+1. GTK-Fenster erzeugen
 2. GtkLayerShell initialisieren
 3. WebKitGTK einbetten
 4. `hud_prototype.html?mini=1` laden
 5. Alpha-Hintergrund aktivieren
 6. top-right ankern
-7. WebGL/Three.js-Szene prüfen
-8. transparente Bereiche prüfen
-9. Input-Region/Click-through prüfen
-10. Animation über mehrere Minuten auf Flicker und Frame-Drops beobachten
+7. Three.js/WebGL und Shader prüfen
+8. transparente Flächen prüfen
+9. Click-through/Input-Region prüfen
+10. Multi-Monitor und Scaling prüfen
+11. Animation auf Flicker und Frame-Drops beobachten
 
-Wenn dieser Spike funktioniert, ist der Linux-Overlay-Pfad technisch ausreichend ent-riskt, um mit der Plattformabstraktion weiterzumachen.
+Wenn dieser Spike sauber läuft, wird der Linux-Overlay-Host produktiv gebaut.
 
-## Nicht im ersten Refactor
+## Aufräumregel
 
-- keine komplette Umbenennung von `Great Sage`/`Ciel`
-- keine Neuentwicklung des HUDs
-- keine gleichzeitige Migration auf GTK4
-- kein Rewrite des Python-Cores
-- kein Zwang zu GNOME-Kompatibilität über fragile Hacks
-- keine Entfernung der Windows-Implementierung
-- kein Verschieben der `check_*.py`, bevor alle Build-Aufrufer angepasst wurden
+Neue Linux-Komponenten dürfen nichts aus `legacy/windows/` importieren. Weitere Windows-spezifische Core-Stellen werden entfernt, sobald ihr Linux-Ersatz vorhanden und getestet ist. Die Git-Historie bleibt die Referenz, deshalb gibt es keinen Grund, alte Windows-Implementierungen dauerhaft im aktiven Codepfad mitzuschleppen.
