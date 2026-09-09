@@ -1,165 +1,92 @@
-# Great Sage
+# Ciel
 
-A local-first Windows desktop AI companion, built around a 3D HUD rather
-than a chat window. Everything runs on your machine: the model, the
-speech recognition, and the voice.
+Ciel is being rebuilt as a Linux-native, Wayland-first desktop companion engine with modular character packs.
 
-- **Talk to it.** Hold one key from anywhere - including inside a game -
-  say what you want, let go. Transcribed locally with faster-whisper.
-- **It answers in a cloned voice**, synthesised locally with F5-TTS.
-- **It does things.** Opens pages, launches applications, opens folders,
-  searches the web and YouTube, reads your screen, reports free VRAM and
-  disk, sets reminders.
-- **A HUD, not a text box.** A Three.js scene that reacts to speech and
-  to what it is doing, with a compact always-on-top overlay mode that
-  clicks straight through to whatever is behind it.
+> Development status: the Linux runtime foundation and character system exist on this branch. The Wayland HUD host and Layer-Shell overlay are the next implementation stage, so this branch is not yet a finished end-user release.
 
-Named for the skill in *That Time I Got Reincarnated as a Slime*, and it
-addresses you as Master.
+## Direction
 
-## What you need
+- Linux only
+- Wayland first
+- Hyprland, Niri and Sway first
+- KDE Plasma Wayland where Layer-Shell is available
+- AMD ROCm first, CPU fallback
+- no Wine and no Windows compatibility layer
+- multiple characters without forking the AI core
+- local-first model, speech and memory
 
-| | |
-|---|---|
-| Windows | 10 or 11 |
-| [Ollama](https://ollama.com/download) | running locally, with `ollama pull qwen3.5:4b` |
-| Python 3.14 | the app itself |
-| Python 3.11 | a second venv, for the overlay window only |
-| NVIDIA GPU | not required, but F5-TTS is too slow to speak in real time on CPU. Developed on a 3060 (12GB) |
+## Character packs
 
-The two Python versions are not a mistake. The transparent overlay needs
-PySide6 6.4.3, which has no build for 3.14; newer Qt flickers through
-ANGLE on a translucent always-on-top window. So the overlay is a separate
-process on 3.11 and the main app runs on 3.14. See `NOTES.md`.
+A character is data, not a fork of the application.
 
-## Install
+```text
+characters/<id>/
+  character.json
+  prompt.md
+  voice/        optional
+  ui/           optional
+```
 
-**[Full step-by-step guide, with troubleshooting -> INSTALL.md](INSTALL.md)**
-Start there if anything goes wrong, particularly if it replies in text but
-never speaks.
+A pack can select its prompt, voice settings, theme and enabled Ciel services. The actual services stay in the trusted core and are validated against a central allowlist.
 
-The short version:
+The first migrated pack is `great_sage`. Additions should use `characters/README.md` as the format reference.
+
+## Linux development entry point
 
 ```bash
-git clone https://github.com/shogunyan12/The-GREAT-SAGE.git
-cd The-GREAT-SAGE
-
-# torch FIRST, with the CUDA build for your GPU - otherwise pip resolves
-# the CPU build and the voice is unusably slow. Check yours with nvidia-smi.
-pip install torch --index-url https://download.pytorch.org/whl/cu121
-pip install -r requirements.txt
-
-# The overlay's own environment
-py -3.11 -m venv .overlay-venv
-.overlay-venv\Scripts\pip install PySide6==6.4.3
-
-ollama pull qwen3.5:4b
+python ciel.py --list-characters
+python ciel.py --diagnose
+python ciel.py --character great_sage --diagnose
 ```
 
-## Run
+Useful environment variables:
 
 ```bash
-py app.py
+CIEL_CHARACTER=great_sage
+CIEL_ACCELERATOR=auto   # auto | rocm | cpu
+CIEL_CHARACTER_DIR=/path/to/characters
 ```
 
-First launch downloads the F5-TTS and faster-whisper models (a few GB,
-once). After that it is fully offline apart from web search and anything
-you ask it to fetch.
+`auto` intentionally means ROCm first and CPU second. NVIDIA CUDA is not a release target for the Linux-native port.
 
-## Use
+## Compute
 
-| | |
-|---|---|
-| **Alt+1** | hold to talk, release to send. Works from any window |
-| **Click the core** | opens the radial menu: settings, chat, logs, overlay |
-| **F1** | shows and hides the developer chrome |
-| **Esc** | closes whatever is open |
+Install PyTorch separately before `requirements.txt` so the build matches the machine:
 
-Say things like *"what time is it"*, *"open spotify"*, *"search the web
-for..."*, *"search on youtube for X and play the first video"*, *"look at
-my screen"*. Requests to DO something are carried out and not narrated -
-it opens the thing and says nothing.
+- AMD Radeon/Ryzen target: ROCm-enabled PyTorch
+- CPU target: CPU-only PyTorch
 
-## Build a standalone exe
+PyTorch exposes ROCm tensors through its `cuda` device API. Ciel detects AMD specifically through `torch.version.hip` and keeps that detail inside `great_sage/hardware/accelerator.py` instead of spreading hardware checks through TTS, STT and model code.
+
+## Wayland UI plan
+
+The existing Three.js HUD remains the first UI to port. The planned host is GTK/WebKitGTK, with GtkLayerShell for the compact transparent overlay. The separate `GIF-Player` project is the reference implementation for Layer-Shell surfaces, positioning, input regions and XDG runtime handling.
+
+The Windows-only host, overlay, installer and packaging scripts were moved to `legacy/windows/`. They are reference code only and new Linux code must not import them.
+
+## Current structure
+
+```text
+ciel.py                         Linux development entry point
+characters/                     declarative character packs
+great_sage/characters/          pack loader and validation
+great_sage/services/            trusted service registry
+great_sage/hardware/            ROCm/CPU selection
+great_sage/platform/linux.py    XDG and Wayland session support
+great_sage/runtime.py           composed runtime context
+great_sage/core/                existing conversation/tool core
+great_sage/models/              model providers
+great_sage/voice/               speech stack
+tests/                          new modular-runtime tests
+legacy/windows/                 old Windows reference implementation
+```
+
+## Tests
+
+The new character/runtime foundation uses standard-library unit tests:
 
 ```bash
-py build.py
+python -m unittest discover -s tests -v
 ```
 
-Produces `dist/GreatSage/` (about 5.5 GB - it carries torch, F5-TTS and
-Whisper) and puts a shortcut on your Desktop. Two bundles are built and
-merged: the app on 3.14 and the overlay on 3.11.
-
-The build runs three checks first and refuses to package if any fail:
-
-```bash
-py check_js.py         # the inline HUD script parses at all
-py check_shaders.py    # GLSL template literals are balanced
-py check_routing.py    # asking it to do something actually does it
-```
-
-`check_routing.py` is the important one. The failure it guards against is
-not a crash - it is Great Sage confidently answering "I cannot do that"
-to something it can do. Several cases in it are transcripts of real
-requests that were refused.
-
-## Configuration
-
-`great_sage/config/settings.py` holds everything tunable: the model, the
-system prompt, voice engine and speed, the global hotkey. Most of it is
-also reachable from the settings panel in the app, which is the better
-place to change it.
-
-Your data - conversations, memories, API keys, settings - is written
-beside the exe (or in the project folder when run from source) and is
-never committed.
-
-## Project layout
-
-```
-app.py                  entry point; checks prerequisites, then the HUD
-run_hud.py              the native window and the WebSocket bridge
-overlay_window.py       the transparent overlay + settings/history windows
-hud_prototype.html      the entire HUD: Three.js scene, chat, settings
-build.py                two-bundle PyInstaller build
-check_*.py              the gates the build will not ship without
-
-great_sage/
-  config/settings.py    every tunable value
-  models/               ModelProvider interface + Ollama, OpenAI, Anthropic
-  core/
-    chat_engine.py      conversation, tool loop
-    tools.py            the 16 tools, and the deterministic pre-routing
-    memory*.py          long-term memory
-    state.py            internal state that shapes replies
-    autonomy.py         scheduled tasks and folder watching
-  voice/
-    f5_tts_engine.py    cloned-voice synthesis
-    speech_to_text.py   faster-whisper
-assets/sfx/             interface sounds
-voice_samples/          the voices Great Sage speaks with
-```
-
-`NOTES.md` has the history and the environment quirks. Read it before
-touching `voice/` or `config/settings.py` - most of what looks like an
-odd choice in there is load-bearing and the reason is written down.
-
-## Known limitations
-
-- **Windows only.** The overlay, the global hotkey and the window
-  handling are all Win32.
-- **The model is small.** qwen3.5:4b was chosen to leave GPU headroom for
-  gaming while it runs. It is not reliable at deciding to use a tool,
-  which is why the requests that matter are pre-routed deterministically
-  rather than left to it.
-- **First launch is slow** and needs the network, for the model
-  downloads.
-- **No test suite for the Python core.** The three checks above cover the
-  HUD script and the routing table; the rest is verified by running it.
-- **Image generation is not implemented**, deliberately.
-
-## Credits
-
-The pre-recorded voice lines under `voice_lines/` are audio from *That
-Time I Got Reincarnated as a Slime*, used here for a personal companion
-project. They are not mine and are included for that purpose only.
+See `PLAN.md` for the complete port order, architecture alternatives, open questions and migration checkpoints.
